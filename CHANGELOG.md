@@ -21,7 +21,7 @@ Added `.github/workflows/ci.yml` with two jobs:
 - **Lint** validates every workflow + `action.yml` via [`reviewdog/action-actionlint@v1`](https://github.com/reviewdog/action-actionlint)
 - **Smoke** runs the action against `tests/fixture/`, a minimal static-site project (plain Node `http` server + one story) and asserts `outcome == 'pass'`
 
-Added `tests/fixture/` with a baked baseline so the smoke job has a deterministic pass-state to compare against
+Added `tests/fixture/` with a baked baseline so the smoke job has a deterministic pass-state to compare against.
 
 ## [v0.1.0] - 2026-06-05
 
