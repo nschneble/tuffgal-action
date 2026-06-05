@@ -1,6 +1,6 @@
 # Tuffgal Action
 
-![GitHub License](https://img.shields.io/github/license/nschneble/tuffgal-action)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 GitHub Action wrapper for [Tuffgal](https://github.com/nschneble/tuffgal),
 a JSON-driven visual regression testing framework for web apps.
