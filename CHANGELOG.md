@@ -10,13 +10,18 @@ _Nothing right now_
 
 ## [v0.2.0] - 2026-06-05
 
-Hardening pass. No behavior changes for consumers; existing `v0` pins keep working.
+Who doesn't love a fast follow maintenance release?
 
-- Replace `eval "npx tuffgal $args"` with a Bash array passed through `env:`-mapped variables so unusual `story` values can't break out of the harness invocation
-- Add `.github/workflows/ci.yml` with two jobs:
-  - **lint** validates every workflow + `action.yml` via [`reviewdog/action-actionlint@v1`](https://github.com/reviewdog/action-actionlint)
-  - **smoke** runs the action against `tests/fixture/`, a minimal static-site project (plain Node `http` server + one story) and asserts `outcome == 'pass'`
-- Add `tests/fixture/` with a baked baseline so the smoke job has a deterministic pass-state to compare against
+Replaced `eval "npx tuffgal $args"` with a Bash array passed through
+`env:`-mapped variables so unusual `story` values can't break out of the
+harness invocation.
+
+Added `.github/workflows/ci.yml` with two jobs:
+
+- **Lint** validates every workflow + `action.yml` via [`reviewdog/action-actionlint@v1`](https://github.com/reviewdog/action-actionlint)
+- **Smoke** runs the action against `tests/fixture/`, a minimal static-site project (plain Node `http` server + one story) and asserts `outcome == 'pass'`
+
+Added `tests/fixture/` with a baked baseline so the smoke job has a deterministic pass-state to compare against
 
 ## [v0.1.0] - 2026-06-05
 

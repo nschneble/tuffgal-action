@@ -122,4 +122,4 @@ MIT. See [LICENSE](LICENSE).
 The Tuffgal logo is an illustration by [Art Attack](https://unsplash.com/@artattackzone)
 on [Unsplash](https://unsplash.com/illustrations/a-woman-with-two-dumbs-in-her-hands-0GxJHpQzVvs)
 with a little [Securitocat](https://octodex.github.com/securitocat/) mixed
-in for a little more whimsy.
+in for a little whimsy.
