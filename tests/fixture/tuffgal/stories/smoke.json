@@ -1,0 +1,5 @@
+{
+  "story": "renders the smoke page",
+  "storageState": "fresh",
+  "actions": [{ "action": "visit-home" }]
+}

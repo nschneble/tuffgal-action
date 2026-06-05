@@ -1,0 +1,10 @@
+{
+  "action": "visit-home",
+  "steps": [
+    { "kind": "navigate", "path": "/" },
+    {
+      "kind": "waitFor",
+      "hint": { "role": "heading", "text": "Tuffgal smoke test" }
+    }
+  ]
+}

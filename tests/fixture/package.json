@@ -1,0 +1,16 @@
+{
+  "name": "tuffgal-action-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal static-site fixture exercised by the tuffgal-action self-test workflow.",
+  "scripts": {
+    "serve": "node serve.mjs"
+  },
+  "devDependencies": {
+    "tuffgal": "^0.1.0-alpha.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

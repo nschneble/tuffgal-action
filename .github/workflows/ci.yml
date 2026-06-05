@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint workflows + action.yml
+        uses: reviewdog/action-actionlint@v1
+        with:
+          fail_level: error
+          reporter: github-check
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./
+        id: tuffgal
+        with:
+          working-directory: tests/fixture
+
+      - name: Assert outcome is 'pass'
+        if: always()
+        env:
+          OUTCOME: ${{ steps.tuffgal.outputs.outcome }}
+          PASSED: ${{ steps.tuffgal.outputs.passed }}
+          CHANGED: ${{ steps.tuffgal.outputs.changed }}
+          FAILED: ${{ steps.tuffgal.outputs.failed }}
+        run: |
+          echo "outcome=$OUTCOME passed=$PASSED changed=$CHANGED failed=$FAILED"
+          if [ "$OUTCOME" != "pass" ]; then
+            echo "Expected outcome 'pass', got '$OUTCOME'." >&2
+            exit 1
+          fi

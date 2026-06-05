@@ -8,6 +8,16 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 _Nothing right now_
 
+## [v0.2.0] - 2026-06-05
+
+Hardening pass. No behavior changes for consumers; existing `v0` pins keep working.
+
+- Replace `eval "npx tuffgal $args"` with a Bash array passed through `env:`-mapped variables so unusual `story` values can't break out of the harness invocation
+- Add `.github/workflows/ci.yml` with two jobs:
+  - **lint** validates every workflow + `action.yml` via [`reviewdog/action-actionlint@v1`](https://github.com/reviewdog/action-actionlint)
+  - **smoke** runs the action against `tests/fixture/`, a minimal static-site project (plain Node `http` server + one story) and asserts `outcome == 'pass'`
+- Add `tests/fixture/` with a baked baseline so the smoke job has a deterministic pass-state to compare against
+
 ## [v0.1.0] - 2026-06-05
 
 This is the initial release! Tuffgal Action is a composite action wrapping
@@ -46,5 +56,6 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/linklater/compare/v0.1.0...HEAD
-[v0.1.0]: https://github.com/nschneble/linklater/releases/tag/v0.1.0
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v0.2.0...HEAD
+[v0.2.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v0.2.0
+[v0.1.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v0.1.0

@@ -1,0 +1,8 @@
+- main:
+  - heading "Tuffgal smoke test" [level=1]
+  - paragraph:
+    - text: This page is rendered by the
+    - code: tests/fixture
+    - text: static site so the
+    - code: tuffgal-action
+    - text: CI workflow can exercise the composite action end-to-end.

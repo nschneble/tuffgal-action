@@ -104,19 +104,23 @@ runs:
       continue-on-error: true
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        TUFFGAL_STORY: ${{ inputs.story }}
+        TUFFGAL_HEADED: ${{ inputs.headed }}
+        TUFFGAL_COVERAGE: ${{ inputs.coverage }}
       run: |
         set -e
-        args="run --manage-servers"
-        if [ -n "${{ inputs.story }}" ]; then
-          args="$args --story \"${{ inputs.story }}\""
+        args=(run --manage-servers)
+        if [ -n "$TUFFGAL_STORY" ]; then
+          args+=(--story "$TUFFGAL_STORY")
         fi
-        if [ "${{ inputs.headed }}" = "true" ]; then
-          args="$args --headed"
+        if [ "$TUFFGAL_HEADED" = "true" ]; then
+          args+=(--headed)
         fi
-        if [ "${{ inputs.coverage }}" = "true" ]; then
-          args="$args --coverage"
+        if [ "$TUFFGAL_COVERAGE" = "true" ]; then
+          args+=(--coverage)
         fi
-        eval "npx tuffgal $args"
+        npx tuffgal "${args[@]}"
 
     - name: Parse harness outcome
       id: outcome
