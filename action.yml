@@ -1,0 +1,193 @@
+name: Tuffgal
+description: Run JSON-driven visual regression stories with Tuffgal. Parses results.json, uploads report + baselines as artifacts when stories fail or change.
+author: Nick Schneble
+branding:
+  icon: eye
+  color: purple
+
+inputs:
+  baselines-path:
+    description: Path to the baselines directory. Must match `paths.baselines` in tuffgal.config.ts. Relative to working-directory.
+    required: false
+    default: "tuffgal/baselines"
+  coverage:
+    description: Run with `--coverage` to capture V8 JS + CSS coverage and emit a monocart report.
+    required: false
+    default: "false"
+  fail-on-changed:
+    description: Fail the job when any story has `changed` status, implying visual drift awaiting review. Defaults to false. Changed stories surface via artifact upload but do not block CI.
+    required: false
+    default: "false"
+  headed:
+    description: Run with `--headed`. Rarely useful in CI; defaults to false.
+    required: false
+    default: "false"
+  install-browsers:
+    description: Run `npx playwright install --with-deps chromium` before the harness. Disable if the consumer's npm ci already installs browsers.
+    required: false
+    default: "true"
+  node-version:
+    description: Node.js version for setup-node. Tuffgal requires Node 22+.
+    required: false
+    default: "22"
+  report-path:
+    description: Path to the report directory written by Tuffgal. Must match `paths.report` in tuffgal.config.ts. Relative to working-directory.
+    required: false
+    default: "tuffgal/report"
+  retention-days:
+    description: Artifact retention in days.
+    required: false
+    default: "14"
+  setup-script:
+    description: Optional npm script to run before the harness. Useful for DB bootstrap (e.g. 'test:ui:setup'). Leave empty to skip.
+    required: false
+    default: ""
+  story:
+    description: Optional `--story <name>` filter to run a single story by filename or text match.
+    required: false
+    default: ""
+  working-directory:
+    description: Directory containing tuffgal.config.ts and package.json. Most projects can leave this as '.'.
+    required: false
+    default: "."
+  upload-artifacts:
+    description: Upload report + baselines as workflow artifacts when stories fail or change. Disable for fully ephemeral pipelines.
+    required: false
+    default: "true"
+
+outputs:
+  changed:
+    description: Number of stories with visual changes awaiting review.
+    value: ${{ steps.outcome.outputs.changed }}
+  failed:
+    description: Number of stories that failed.
+    value: ${{ steps.outcome.outputs.failed }}
+  outcome:
+    description: One of 'pass', 'changed', 'failed', or 'no-results' if results.json was not written.
+    value: ${{ steps.outcome.outputs.outcome }}
+  passed:
+    description: Number of stories that passed.
+    value: ${{ steps.outcome.outputs.passed }}
+  total:
+    description: Total number of stories executed.
+    value: ${{ steps.outcome.outputs.total }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+        cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm ci
+
+    - name: Install Playwright browsers
+      if: inputs.install-browsers == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npx playwright install --with-deps chromium
+
+    - name: Run setup script
+      if: inputs.setup-script != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm run ${{ inputs.setup-script }}
+
+    - name: Run Tuffgal
+      id: harness
+      continue-on-error: true
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -e
+        args="run --manage-servers"
+        if [ -n "${{ inputs.story }}" ]; then
+          args="$args --story \"${{ inputs.story }}\""
+        fi
+        if [ "${{ inputs.headed }}" = "true" ]; then
+          args="$args --headed"
+        fi
+        if [ "${{ inputs.coverage }}" = "true" ]; then
+          args="$args --coverage"
+        fi
+        eval "npx tuffgal $args"
+
+    - name: Parse harness outcome
+      id: outcome
+      if: always()
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        results="${{ inputs.report-path }}/results.json"
+        if [ ! -f "$results" ]; then
+          echo "passed=0" >> "$GITHUB_OUTPUT"
+          echo "changed=0" >> "$GITHUB_OUTPUT"
+          echo "failed=0" >> "$GITHUB_OUTPUT"
+          echo "total=0" >> "$GITHUB_OUTPUT"
+          echo "outcome=no-results" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Tuffgal"
+            echo ""
+            echo "Harness produced no \`results.json\`. Treating as failed."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
+        passed=$(jq -r '.totals.passed // 0' "$results")
+        changed=$(jq -r '.totals.changed // 0' "$results")
+        failed=$(jq -r '.totals.failed // 0' "$results")
+        total=$(jq -r '.totals.stories // 0' "$results")
+
+        if [ "$failed" -gt 0 ]; then
+          outcome="failed"
+        elif [ "$changed" -gt 0 ]; then
+          outcome="changed"
+        else
+          outcome="pass"
+        fi
+
+        echo "passed=$passed" >> "$GITHUB_OUTPUT"
+        echo "changed=$changed" >> "$GITHUB_OUTPUT"
+        echo "failed=$failed" >> "$GITHUB_OUTPUT"
+        echo "total=$total" >> "$GITHUB_OUTPUT"
+        echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "## Tuffgal"
+          echo ""
+          echo "Outcome: **$outcome**"
+          echo ""
+          echo "| Status | Count |"
+          echo "|--------|-------|"
+          echo "| Pass | $passed |"
+          echo "| Changed | $changed |"
+          echo "| Failed | $failed |"
+          echo "| Total | $total |"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload report
+      if: always() && inputs.upload-artifacts == 'true' && (steps.outcome.outputs.failed != '0' || steps.outcome.outputs.changed != '0' || steps.outcome.outputs.outcome == 'no-results')
+      uses: actions/upload-artifact@v4
+      with:
+        name: tuffgal-report
+        path: ${{ inputs.working-directory }}/${{ inputs.report-path }}/
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload updated baselines
+      if: always() && inputs.upload-artifacts == 'true' && steps.outcome.outputs.changed != '0'
+      uses: actions/upload-artifact@v4
+      with:
+        name: tuffgal-baselines
+        path: ${{ inputs.working-directory }}/${{ inputs.baselines-path }}/
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Surface harness exit code
+      if: always() && (steps.outcome.outputs.outcome == 'failed' || steps.outcome.outputs.outcome == 'no-results' || (inputs.fail-on-changed == 'true' && steps.outcome.outputs.outcome == 'changed'))
+      shell: bash
+      run: exit 1
