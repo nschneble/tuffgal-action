@@ -4,37 +4,41 @@
     <meta charset="utf-8" />
     <title>Tuffgal Action fixture</title>
     <style>
-      :root {
-        color-scheme: light;
-      }
+      html,
       body {
         margin: 0;
-        padding: 4rem 2rem;
-        font: 16px/1.5 system-ui, sans-serif;
-        background: #ffffff;
-        color: #111111;
+        padding: 0;
+        height: 100%;
+        background: #3b82f6;
       }
       main {
-        max-width: 40rem;
-        margin: 0 auto;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        height: 100%;
       }
-      h1 {
-        margin: 0 0 1rem 0;
-        font-size: 2rem;
+      main > div {
+        height: 100%;
       }
-      p {
-        margin: 0;
+      main > div:nth-child(1) {
+        background: #ef4444;
+      }
+      main > div:nth-child(2) {
+        background: #10b981;
+      }
+      main > div:nth-child(3) {
+        background: #f59e0b;
+      }
+      main > div:nth-child(4) {
+        background: #6366f1;
       }
     </style>
   </head>
   <body>
-    <main>
-      <h1>Tuffgal smoke test</h1>
-      <p>
-        This page is rendered by the <code>tests/fixture</code> static site so
-        the <code>tuffgal-action</code> CI workflow can exercise the composite
-        action end-to-end.
-      </p>
+    <main role="main" aria-label="smoke fixture">
+      <div></div>
+      <div></div>
+      <div></div>
+      <div></div>
     </main>
   </body>
 </html>

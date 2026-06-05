@@ -4,7 +4,7 @@
     { "kind": "navigate", "path": "/" },
     {
       "kind": "waitFor",
-      "hint": { "role": "heading", "text": "Tuffgal smoke test" }
+      "hint": { "role": "main", "text": "smoke fixture" }
     }
   ]
 }
