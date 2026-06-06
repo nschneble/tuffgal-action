@@ -6,7 +6,14 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
-_Nothing right now_
+Finished the `eval` hardening pass started in `v0.2.0`. The `setup-script`
+input now flows through an `env:`-mapped variable instead of being
+interpolated directly into `npm run`, so unusual script names can't break
+out of the harness invocation. The `report-path` input is now env-mapped
+in the parse step for the same reason.
+
+Added `set -euo pipefail` to the parse step so a mid-block `jq` failure
+won't leak partial outputs.
 
 ## [v0.2.0] - 2026-06-05
 

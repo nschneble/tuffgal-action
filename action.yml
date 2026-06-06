@@ -46,14 +46,14 @@ inputs:
     description: Optional `--story <name>` filter to run a single story by filename or text match.
     required: false
     default: ""
-  working-directory:
-    description: Directory containing tuffgal.config.ts and package.json. Most projects can leave this as '.'.
-    required: false
-    default: "."
   upload-artifacts:
     description: Upload report + baselines as workflow artifacts when stories fail or change. Disable for fully ephemeral pipelines.
     required: false
     default: "true"
+  working-directory:
+    description: Directory containing tuffgal.config.ts and package.json. Most projects can leave this as '.'.
+    required: false
+    default: "."
 
 outputs:
   changed:
@@ -97,7 +97,9 @@ runs:
       if: inputs.setup-script != ''
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: npm run ${{ inputs.setup-script }}
+      env:
+        TUFFGAL_SETUP_SCRIPT: ${{ inputs.setup-script }}
+      run: npm run "$TUFFGAL_SETUP_SCRIPT"
 
     - name: Run Tuffgal
       id: harness
@@ -127,8 +129,11 @@ runs:
       if: always()
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        TUFFGAL_REPORT_PATH: ${{ inputs.report-path }}
       run: |
-        results="${{ inputs.report-path }}/results.json"
+        set -euo pipefail
+        results="$TUFFGAL_REPORT_PATH/results.json"
         if [ ! -f "$results" ]; then
           echo "passed=0" >> "$GITHUB_OUTPUT"
           echo "changed=0" >> "$GITHUB_OUTPUT"
