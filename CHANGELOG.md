@@ -6,6 +6,10 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+_Nothing right now_
+
+## [v0.2.1] - 2026-06-06
+
 Finished the `eval` hardening pass started in `v0.2.0`. The `setup-script`
 input now flows through an `env:`-mapped variable instead of being
 interpolated directly into `npm run`, so unusual script names can't break
@@ -68,6 +72,7 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v0.2.1...HEAD
+[v0.2.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v0.2.1
 [v0.2.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v0.2.0
 [v0.1.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v0.1.0
