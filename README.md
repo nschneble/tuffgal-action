@@ -74,33 +74,33 @@ the CI-owned-baselines model asks of a consumer.
 
 ## Inputs
 
-| Name                | Default             | Description                                                                                                       |
-| ------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `baselines-path`    | `tuffgal/baselines` | Path to the baselines directory, relative to `working-directory` (must match `paths.baselines`)                   |
-| `coverage`          | `false`             | Run with `--coverage` to emit a monocart V8 coverage report                                                       |
+| Name                | Default             | Description                                                                                                                                                                            |
+| ------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baselines-path`    | `tuffgal/baselines` | Path to the baselines directory, relative to `working-directory` (must match `paths.baselines`)                                                                                        |
+| `coverage`          | `false`             | Run with `--coverage` to emit a monocart V8 coverage report                                                                                                                            |
 | `fail-on-changed`   | `true`              | Fail the job when stories have pending visual changes (`new`, `changed`, or `deleted`) awaiting review. Set `false` to surface changes via artifact + comment without blocking the job |
-| `headed`            | `false`             | Run with `--headed` (rarely useful in CI)                                                                         |
-| `install-browsers`  | `true`              | Run `npx playwright install --with-deps chromium` before the harness                                              |
-| `node-version`      | `22`                | Node.js version (Tuffgal requires Node 22+)                                                                       |
-| `report-path`       | `tuffgal/report`    | Path to the report directory, relative to `working-directory` (must match `paths.report` in `tuffgal.config.ts`)  |
-| `retention-days`    | `14`                | Artifact retention                                                                                                |
-| `setup-script`      | `''`                | Optional npm script to run before the harness (e.g. DB bootstrap)                                                 |
-| `story`             | `''`                | Filter to a single story (`--story <name>`)                                                                       |
-| `upload-artifacts`  | `true`              | Upload the report + candidate baselines as workflow artifacts when visual changes await review                    |
-| `working-directory` | `.`                 | Directory containing `tuffgal.config.ts` and `package.json`                                                       |
+| `headed`            | `false`             | Run with `--headed` (rarely useful in CI)                                                                                                                                              |
+| `install-browsers`  | `true`              | Run `npx playwright install --with-deps chromium` before the harness                                                                                                                   |
+| `node-version`      | `22`                | Node.js version (Tuffgal requires Node 22+)                                                                                                                                            |
+| `report-path`       | `tuffgal/report`    | Path to the report directory, relative to `working-directory` (must match `paths.report` in `tuffgal.config.ts`)                                                                       |
+| `retention-days`    | `14`                | Artifact retention                                                                                                                                                                     |
+| `setup-script`      | `''`                | Optional npm script to run before the harness (e.g. DB bootstrap)                                                                                                                      |
+| `story`             | `''`                | Filter to a single story (`--story <name>`)                                                                                                                                            |
+| `upload-artifacts`  | `true`              | Upload the report + candidate baselines as workflow artifacts when visual changes await review                                                                                         |
+| `working-directory` | `.`                 | Directory containing `tuffgal.config.ts` and `package.json`                                                                                                                            |
 
 ## Outputs
 
-| Name           | Description                                                                                        |
-| -------------- | ------------------------------------------------------------------------------------------------- |
-| `changed`      | Number of stories whose committed baseline changed (pixels or a11y snapshot)                       |
-| `deleted`      | Number of orphaned baseline entries with no matching story (pruned on approve)                     |
+| Name           | Description                                                                                                                 |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `changed`      | Number of stories whose committed baseline changed (pixels or a11y snapshot)                                                |
+| `deleted`      | Number of orphaned baseline entries with no matching story (pruned on approve)                                              |
 | `env-mismatch` | `'true'` when the capture environment in `baselines/manifest.json` no longer matches this CI run (expect a full re-approve) |
-| `failed`       | Number of stories that failed                                                                     |
-| `new`          | Number of stories with no committed baseline yet (candidate written)                               |
-| `outcome`      | One of `pass`, `changed` (pending new/changed/deleted review), `env-mismatch`, `failed`, or `no-results` |
-| `passed`       | Number of stories that passed                                                                     |
-| `total`        | Total stories executed                                                                            |
+| `failed`       | Number of stories that failed                                                                                               |
+| `new`          | Number of stories with no committed baseline yet (candidate written)                                                        |
+| `outcome`      | One of `pass`, `changed` (pending new/changed/deleted review), `env-mismatch`, `failed`, or `no-results`                    |
+| `passed`       | Number of stories that passed                                                                                               |
+| `total`        | Total stories executed                                                                                                      |
 
 `outcome` follows Tuffgal's exit-code precedence: `failed` (broken stories) >
 `env-mismatch` (capture environment changed) > `changed` (pending visual
