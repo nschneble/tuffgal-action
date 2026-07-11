@@ -1,0 +1,33 @@
+# Copy this into your consumer repo at .github/workflows/tuffgal-approve.yml
+# It lets maintainers approve Tuffgal candidate baselines by commenting
+# `@tuffgal approve` on a pull request. The bot verifies the commenter has
+# write access, downloads the tuffgal-candidates artifact from the PR's latest
+# run, and commits the approved baselines to the PR head branch.
+#
+# Fork PRs: the default token cannot push to fork branches, so fork
+# contributors approve locally instead — download the tuffgal-candidates
+# artifact and run `npx tuffgal approve --from <dir> --prune`, then commit.
+name: tuffgal-approve
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  approve:
+    # Only PR comments that mention the approve command. The action re-validates
+    # the command and the commenter's permission before doing anything.
+    if: >-
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '@tuffgal approve')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit baselines to the PR head branch
+      pull-requests: write # react + reply on the comment
+      actions: read # download the candidates artifact from the PR run
+    steps:
+      - uses: nschneble/tuffgal-action/approve@v1
+        with:
+          working-directory: .
+          # baselines-path: tuffgal/baselines
+          # node-version: "22"

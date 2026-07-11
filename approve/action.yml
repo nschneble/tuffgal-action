@@ -1,0 +1,402 @@
+name: Tuffgal Approve
+description: >-
+  Commit CI-produced candidate baselines to a PR head branch in response to a
+  `@tuffgal approve` comment. Verifies commenter permission, downloads the
+  tuffgal-candidates artifact from the PR's latest run, applies it via
+  `tuffgal approve --from`, and commits ONLY the baselines directory as a bot.
+  Never checks out or executes PR-branch code.
+author: Nick Schneble
+branding:
+  icon: check-circle
+  color: purple
+
+inputs:
+  baselines-path:
+    description: Path to the baselines directory (must match `paths.baselines` in tuffgal.config.ts). Commits are strictly scoped to this directory.
+    required: false
+    default: "tuffgal/baselines"
+  node-version:
+    description: Node.js version for setup-node. Tuffgal requires Node 22+.
+    required: false
+    default: "22"
+  working-directory:
+    description: Directory containing tuffgal.config.ts and package.json.
+    required: false
+    default: "."
+  git-user-name:
+    description: Name used for the baseline commit author/committer.
+    required: false
+    default: "tuffgal[bot]"
+  git-user-email:
+    description: Email used for the baseline commit author/committer.
+    required: false
+    default: "tuffgal-bot@users.noreply.github.com"
+
+runs:
+  using: composite
+  steps:
+    # ------------------------------------------------------------------ #
+    # 1. Permission gate + PR resolution. Runs BEFORE any checkout,       #
+    #    download, or write. Fails closed: unauthorized commenters get a  #
+    #    👀 reaction and nothing else; fork PRs are declined with a note. #
+    #    The comment body is only ever read in JS and compared — it is    #
+    #    never interpolated into a shell command.                         #
+    # ------------------------------------------------------------------ #
+    - name: Gate on permission + resolve PR
+      id: gate
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          const comment = context.payload.comment;
+          const issue = context.payload.issue;
+
+          // Defense in depth: re-validate the trigger even though the calling
+          // workflow already filtered. `\b@tuffgal approve\b` on a boundary,
+          // case-insensitive; the body never reaches a shell.
+          const body = String(comment && comment.body || '');
+          if (!issue || !issue.pull_request || !/(^|\s)@tuffgal\s+approve(\s|$)/i.test(body)) {
+            core.info('Comment is not a @tuffgal approve on a PR; nothing to do.');
+            core.setOutput('proceed', 'false');
+            return;
+          }
+
+          const react = async (content) => {
+            try {
+              await github.rest.reactions.createForIssueComment({
+                owner, repo, comment_id: comment.id, content,
+              });
+            } catch (e) { core.info(`Could not add reaction: ${e.message}`); }
+          };
+
+          // Verify the commenter's repository permission BEFORE any download or
+          // write. Require admin / maintain / write. Fail closed on anything else
+          // (including API errors).
+          const actor = comment.user.login;
+          let level = 'none';
+          try {
+            const perm = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner, repo, username: actor,
+            });
+            level = perm.data.permission; // 'admin' | 'maintain' | 'write' | 'read' | 'none'
+          } catch (e) {
+            core.warning(`Permission lookup failed for ${actor}: ${e.message}`);
+          }
+          const allowed = ['admin', 'maintain', 'write'];
+          if (!allowed.includes(level)) {
+            core.warning(`${actor} has '${level}' permission; approval requires write or higher.`);
+            await react('eyes');
+            core.setOutput('proceed', 'false');
+            return;
+          }
+
+          // Resolve the PR head. Fork PRs cannot be pushed to with the default
+          // token — decline with a note pointing at the implicit approve path.
+          const pr = await github.rest.pulls.get({ owner, repo, pull_number: issue.number });
+          const headRepo = pr.data.head.repo ? pr.data.head.repo.full_name : null;
+          const baseRepo = `${owner}/${repo}`;
+          if (headRepo !== baseRepo) {
+            await react('eyes');
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: issue.number,
+              body: [
+                '<!-- tuffgal-approve -->',
+                '🍴 This PR is from a fork, so the bot cannot push baselines to its branch with the default token.',
+                '',
+                'Approve from a local checkout instead: download the `tuffgal-candidates` artifact from the latest run and run',
+                '`npx tuffgal approve --from <extracted-dir> --prune`, then commit the updated baselines directory to your fork branch.',
+              ].join('\n'),
+            });
+            core.setOutput('proceed', 'false');
+            return;
+          }
+
+          core.setOutput('proceed', 'true');
+          core.setOutput('pr_number', String(issue.number));
+          core.setOutput('comment_id', String(comment.id));
+          core.setOutput('head_ref', pr.data.head.ref);
+          core.setOutput('head_sha', pr.data.head.sha);
+
+    # ------------------------------------------------------------------ #
+    # 2. Check out the BASE repository's DEFAULT branch — trusted code    #
+    #    only. The PR head branch is never checked out or executed; it is #
+    #    used solely as a commit target (via the git data API) and as a   #
+    #    data-only source for its current baselines.                      #
+    # ------------------------------------------------------------------ #
+    - name: Checkout default branch (trusted)
+      if: steps.gate.outputs.proceed == 'true'
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.repository.default_branch }}
+        fetch-depth: 1
+
+    - name: Set up Node.js
+      if: steps.gate.outputs.proceed == 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+        cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+    - name: Install dependencies (trusted base deps)
+      if: steps.gate.outputs.proceed == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm ci
+
+    # ------------------------------------------------------------------ #
+    # 3. Download the tuffgal-candidates artifact from the latest         #
+    #    completed run for the PR head SHA. Written to $RUNNER_TEMP,      #
+    #    outside the checkout, so it can never overwrite repo files.      #
+    # ------------------------------------------------------------------ #
+    - name: Download candidates artifact
+      id: download
+      if: steps.gate.outputs.proceed == 'true'
+      uses: actions/github-script@v7
+      env:
+        HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const { owner, repo } = context.repo;
+          const headSha = process.env.HEAD_SHA;
+
+          // Newest completed run for this head SHA that carries the artifact.
+          const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
+            owner, repo, head_sha: headSha, status: 'completed', per_page: 100,
+          });
+          runs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+          let artifact = null;
+          for (const run of runs) {
+            const arts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              owner, repo, run_id: run.id, per_page: 100,
+            });
+            const match = arts.find(a => a.name === 'tuffgal-candidates' && !a.expired);
+            if (match) { artifact = match; break; }
+          }
+          if (!artifact) {
+            core.setOutput('found', 'false');
+            core.warning(`No tuffgal-candidates artifact found for ${headSha}.`);
+            return;
+          }
+
+          const zip = await github.rest.actions.downloadArtifact({
+            owner, repo, artifact_id: artifact.id, archive_format: 'zip',
+          });
+          const dir = path.join(process.env.RUNNER_TEMP, 'tuffgal-candidates');
+          fs.mkdirSync(dir, { recursive: true });
+          const zipPath = path.join(process.env.RUNNER_TEMP, 'tuffgal-candidates.zip');
+          fs.writeFileSync(zipPath, Buffer.from(zip.data));
+          core.setOutput('found', 'true');
+          core.setOutput('zip_path', zipPath);
+          core.setOutput('dir', dir);
+
+    - name: No candidates found
+      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found != 'true'
+      uses: actions/github-script@v7
+      env:
+        PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          await github.rest.issues.createComment({
+            owner, repo, issue_number: Number(process.env.PR_NUMBER),
+            body: '<!-- tuffgal-approve -->\n⚠️ No `tuffgal-candidates` artifact was found for the latest run of this PR. Re-run the visual regression job, then comment `@tuffgal approve` again.',
+          });
+
+    # ------------------------------------------------------------------ #
+    # 4. Validate the artifact BEFORE extraction (fail closed). Every zip #
+    #    entry must be a relative path with no traversal and an allowed   #
+    #    extension. Any violation aborts the job.                         #
+    # ------------------------------------------------------------------ #
+    - name: Validate + extract candidates
+      id: extract
+      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
+      shell: bash
+      env:
+        ZIP_PATH: ${{ steps.download.outputs.zip_path }}
+        CAND_DIR: ${{ steps.download.outputs.dir }}
+      run: |
+        set -euo pipefail
+
+        # Validate every zip entry (allowlist, no traversal) BEFORE extracting.
+        # Fails closed on any violation. Logic lives in a standalone, unit-tested
+        # script.
+        bash "$GITHUB_ACTION_PATH/validate-artifact.sh" "$ZIP_PATH"
+
+        rm -rf "$CAND_DIR"
+        mkdir -p "$CAND_DIR"
+        unzip -qq -o "$ZIP_PATH" -d "$CAND_DIR"
+        echo "cand_dir=$CAND_DIR" >> "$GITHUB_OUTPUT"
+
+    # ------------------------------------------------------------------ #
+    # 5. Seed the baselines directory from the PR head (DATA ONLY — no    #
+    #    code is checked out or run) so prune operates against the head's #
+    #    committed set, then apply the candidates via the CLI. The CLI    #
+    #    owns the tree copy, prune, and manifest write.                   #
+    # ------------------------------------------------------------------ #
+    - name: Apply candidates via tuffgal approve
+      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CAND_DIR: ${{ steps.extract.outputs.cand_dir }}
+        BASELINES_PATH: ${{ inputs.baselines-path }}
+        HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
+      run: |
+        set -euo pipefail
+
+        # Fetch the head commit as data and materialize ONLY the baselines
+        # directory from it. `git archive` extracts tracked files without
+        # checking out the working tree or running any repo code.
+        git fetch --no-tags --depth=1 origin "$HEAD_SHA"
+        rm -rf "$BASELINES_PATH"
+        mkdir -p "$BASELINES_PATH"
+        if git cat-file -e "$HEAD_SHA:$BASELINES_PATH" 2>/dev/null; then
+          git archive "$HEAD_SHA" -- "$BASELINES_PATH" | tar -x
+        fi
+
+        # CLI owns baseline promotion, prune, and manifest.json.
+        npx tuffgal approve --from "$CAND_DIR" --prune
+
+    # ------------------------------------------------------------------ #
+    # 6. Commit ONLY the baselines directory onto the PR head branch via  #
+    #    the git data API. Parent is the head SHA; the head branch is     #
+    #    never checked out. Paths are scoped to baselines-path.           #
+    # ------------------------------------------------------------------ #
+    - name: Commit baselines to PR head branch
+      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
+      uses: actions/github-script@v7
+      env:
+        WORKDIR: ${{ inputs.working-directory }}
+        BASELINES_PATH: ${{ inputs.baselines-path }}
+        HEAD_REF: ${{ steps.gate.outputs.head_ref }}
+        HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
+        PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
+        COMMENT_ID: ${{ steps.gate.outputs.comment_id }}
+        GIT_USER_NAME: ${{ inputs.git-user-name }}
+        GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const { execFileSync } = require('child_process');
+          const { owner, repo } = context.repo;
+
+          const workdir = process.env.WORKDIR || '.';
+          const baselinesRel = process.env.BASELINES_PATH;              // working-directory-relative (matches the input contract)
+          const baselinesAbs = path.join(workdir, baselinesRel);
+          const headRef = process.env.HEAD_REF;
+          const headSha = process.env.HEAD_SHA;
+
+          // Baselines prefix in two frames: repo-root-relative (for tree entries
+          // and the guard) and working-directory-relative (for git pathspecs,
+          // which git resolves against the process cwd).
+          const workdirPrefix = workdir === '.' ? '' : workdir.replace(/\\/g, '/').replace(/\/$/, '');
+          const baselinesRelPosix = baselinesRel.replace(/\\/g, '/').replace(/\/$/, '');
+          const prefix = path.posix.join(workdirPrefix, baselinesRelPosix).replace(/\/$/, '');
+
+          const guard = (p) => {
+            const norm = p.replace(/\\/g, '/');
+            if (norm.startsWith('/') || norm.split('/').includes('..')) {
+              throw new Error(`Refusing out-of-scope path: ${p}`);
+            }
+            if (!(norm === prefix || norm.startsWith(prefix + '/'))) {
+              throw new Error(`Refusing path outside baselines directory: ${p}`);
+            }
+            return norm;
+          };
+
+          // Files currently on disk under baselines (post-approve desired state).
+          const walk = (d) => {
+            const out = [];
+            if (!fs.existsSync(d)) return out;
+            for (const name of fs.readdirSync(d)) {
+              const full = path.join(d, name);
+              const st = fs.statSync(full);
+              if (st.isDirectory()) out.push(...walk(full));
+              else out.push(full);
+            }
+            return out;
+          };
+          // Re-anchor to the repo-root frame (workdirPrefix + workdir-relative
+          // path) so onDisk, atHead, prefix, and the git-tree API all agree —
+          // correct for both working-directory '.' and a subdir.
+          const onDisk = walk(baselinesAbs).map(f => {
+            const rel = path.relative(workdir, f).split(path.sep).join('/');
+            return { repoPath: guard(path.posix.join(workdirPrefix, rel)), absPath: f };
+          });
+
+          // Files under baselines at the head commit (to compute deletions).
+          // git resolves the pathspec against cwd (= workdir), so pass the
+          // workdir-relative prefix, then re-anchor each name to repo-root.
+          let atHead = [];
+          try {
+            const listed = execFileSync('git', ['ls-tree', '-r', '--name-only', headSha, '--', baselinesRelPosix], {
+              cwd: workdir, encoding: 'utf8',
+            });
+            atHead = listed.split('\n').map(s => s.trim()).filter(Boolean)
+              .map(name => guard(path.posix.join(workdirPrefix, name)));
+          } catch (e) {
+            core.info(`No baselines at head (${e.message}); treating as bootstrap.`);
+          }
+
+          const onDiskSet = new Set(onDisk.map(f => f.repoPath));
+          const deletions = atHead.filter(p => !onDiskSet.has(p));
+
+          // Build tree entries: blobs for present files, null-sha deletions.
+          const tree = [];
+          for (const f of onDisk) {
+            const content = fs.readFileSync(f.absPath);
+            const blob = await github.rest.git.createBlob({
+              owner, repo, content: content.toString('base64'), encoding: 'base64',
+            });
+            tree.push({ path: f.repoPath, mode: '100644', type: 'blob', sha: blob.data.sha });
+          }
+          for (const p of deletions) {
+            tree.push({ path: p, mode: '100644', type: 'blob', sha: null });
+          }
+
+          if (tree.length === 0) {
+            core.info('No baseline changes to commit.');
+            return;
+          }
+
+          const headCommit = await github.rest.git.getCommit({ owner, repo, commit_sha: headSha });
+          const newTree = await github.rest.git.createTree({
+            owner, repo, base_tree: headCommit.data.tree.sha, tree,
+          });
+          const commit = await github.rest.git.createCommit({
+            owner, repo,
+            message: 'chore(tuffgal): approve candidate baselines',
+            tree: newTree.data.sha,
+            parents: [headSha],
+            author: { name: process.env.GIT_USER_NAME, email: process.env.GIT_USER_EMAIL },
+            committer: { name: process.env.GIT_USER_NAME, email: process.env.GIT_USER_EMAIL },
+          });
+
+          // Fast-forward the head branch to the new commit. Refuse to update if
+          // the branch advanced since we resolved it (avoid clobbering).
+          try {
+            await github.rest.git.updateRef({
+              owner, repo, ref: `heads/${headRef}`, sha: commit.data.sha, force: false,
+            });
+          } catch (e) {
+            core.setFailed(`Could not fast-forward heads/${headRef}: ${e.message}. The branch may have moved; re-run approval.`);
+            return;
+          }
+
+          await github.rest.reactions.createForIssueComment({
+            owner, repo, comment_id: Number(process.env.COMMENT_ID), content: 'rocket',
+          });
+          await github.rest.issues.createComment({
+            owner, repo, issue_number: Number(process.env.PR_NUMBER),
+            body: [
+              '<!-- tuffgal-approve -->',
+              `🚀 Committed candidate baselines to \`${headRef}\` as [\`${commit.data.sha.slice(0, 7)}\`](${context.serverUrl}/${owner}/${repo}/commit/${commit.data.sha}).`,
+              '',
+              'Pull the branch to get the updated baselines. The next visual regression run should pass.',
+            ].join('\n'),
+          });
