@@ -6,22 +6,30 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+_Nothing right now_
+
+## [v1.1.0] - 2026-07-11
+
+Lots of nuanced changes to the `approve` sub-action.
+
 ### Added
 
 - `approve` sub-action: opt-in `token` input for the baseline commit
   - Defaults to `GITHUB_TOKEN`, which GitHub will not use to re-trigger the consumer's visual workflow
-  - Supply a PAT or GitHub App installation token to have the visual check re-run automatically against the new baselines
+  - Supply a PAT or GitHub app installation token to have the visual check re-run automatically against the new baselines
 
 ### Fixed
 
-- `approve` now reacts "👀" the moment the permission gate accepts, before
-  any other actions, so a mid-run failure is distinguishable from an
-  unresponsive trigger
-- `approve` no longer coin-flips when a run carries multiple candidates
-  artifacts
+- `approve` now reacts "👀" the moment the permission gate accepts
+- `approve` no longer coin-flips when a run carries multiple candidates artifacts
 - `approve` success comment no longer claims the next visual run "should pass"
   - With the default `GITHUB_TOKEN` it now explains the check will not re-run on its own and lists how to kick it
   - With a custom `token` it states the check re-runs automatically
+
+## [v1.0.1] - 2026-07-11
+
+Did an oopsie. Changes triggered GitHub's secondary rate limit and kinda
+made the whole thing… not work. Now it does again! Probably.
 
 ## [v1.0.0] - 2026-07-10
 
@@ -124,7 +132,9 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.1.0...HEAD
+[v1.1.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.1.0
+[v1.0.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.0.1
 [v1.0.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.0.0
 [v0.2.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v0.2.1
 [v0.2.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v0.2.0
