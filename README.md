@@ -170,13 +170,13 @@ give each job a unique `upload-artifact` name and set the matching
 Approve fails closed when the selected run carries more than one artifact
 with this name rather than promoting an arbitrary set.
 
-**Re-running the visual check (the `token` input).** By default the bot commits
-the approved baselines with the workflow's `GITHUB_TOKEN`. GitHub deliberately
-does **not** trigger workflows for commits pushed with `GITHUB_TOKEN` (recursion
-prevention), so your visual regression check will **not** re-run on its own after
-approval — it stays stale/failing until you kick it. The success comment tells
-you how: close and reopen the PR, push an empty commit, or re-run the visual
-workflow from the **Actions** tab.
+**Re-running the visual check.** By default the bot commits the approved
+baselines with the workflow's `GITHUB_TOKEN`. GitHub deliberately doesn't
+trigger workflows for commits pushed with `GITHUB_TOKEN`, so your visual
+regression check will not re-run on its own after approval. It stays stale
+or failing until you kick it. The success comment explains how: close and
+reopen the PR, push an empty commit, or re-run the visual workflow from the
+**Actions** tab.
 
 To make the pushed commit trigger workflows normally — so the check re-runs and
 clears itself automatically — pass a PAT or GitHub App installation token via the
