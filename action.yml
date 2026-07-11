@@ -1,5 +1,5 @@
 name: Tuffgal
-description: Run JSON-driven visual regression stories with Tuffgal. Parses results.json, uploads report + baselines as artifacts when stories fail or change.
+description: Run JSON-driven visual regression stories with Tuffgal in CI mode. Parses results.json, uploads the report + candidate baselines as artifacts, and posts a sticky PR comment when visual changes await review.
 author: Nick Schneble
 branding:
   icon: eye
@@ -15,9 +15,9 @@ inputs:
     required: false
     default: "false"
   fail-on-changed:
-    description: Fail the job when any story has `changed` status, implying visual drift awaiting review. Defaults to false. Changed stories surface via artifact upload but do not block CI.
+    description: Fail the job when stories have pending visual changes (`new`, `changed`, or `deleted`) awaiting review. Defaults to true — visual changes are a PR review gate under the CI-owned-baselines model. Set to false to let changes surface via artifact + comment without blocking the job.
     required: false
-    default: "false"
+    default: "true"
   headed:
     description: Run with `--headed`. Rarely useful in CI; defaults to false.
     required: false
@@ -47,7 +47,7 @@ inputs:
     required: false
     default: ""
   upload-artifacts:
-    description: Upload report + baselines as workflow artifacts when stories fail or change. Disable for fully ephemeral pipelines.
+    description: Upload the report + candidate baselines as workflow artifacts when visual changes await review. Disable for fully ephemeral pipelines.
     required: false
     default: "true"
   working-directory:
@@ -57,13 +57,22 @@ inputs:
 
 outputs:
   changed:
-    description: Number of stories with visual changes awaiting review.
+    description: Number of stories whose committed baseline changed (pixels or a11y snapshot drifted).
     value: ${{ steps.outcome.outputs.changed }}
+  deleted:
+    description: Number of orphaned baseline entries with no matching story/action (pruned on approve).
+    value: ${{ steps.outcome.outputs.deleted }}
+  env-mismatch:
+    description: "'true' when the capture environment recorded in baselines/manifest.json no longer matches this CI environment (expect a full re-approve), else 'false'."
+    value: ${{ steps.outcome.outputs.env-mismatch }}
   failed:
-    description: Number of stories that failed.
+    description: Number of stories that failed (steps threw / broken).
     value: ${{ steps.outcome.outputs.failed }}
+  new:
+    description: Number of stories with no committed baseline yet (candidate written, awaiting first approval).
+    value: ${{ steps.outcome.outputs.new }}
   outcome:
-    description: One of 'pass', 'changed', 'failed', or 'no-results' if results.json was not written.
+    description: One of 'pass', 'changed' (pending new/changed/deleted visual review), 'env-mismatch', 'failed', or 'no-results' if results.json was not written.
     value: ${{ steps.outcome.outputs.outcome }}
   passed:
     description: Number of stories that passed.
@@ -112,7 +121,7 @@ runs:
         TUFFGAL_COVERAGE: ${{ inputs.coverage }}
       run: |
         set -e
-        args=(run --manage-servers)
+        args=(run --ci --manage-servers)
         if [ -n "$TUFFGAL_STORY" ]; then
           args+=(--story "$TUFFGAL_STORY")
         fi
@@ -135,11 +144,17 @@ runs:
         set -euo pipefail
         results="$TUFFGAL_REPORT_PATH/results.json"
         if [ ! -f "$results" ]; then
-          echo "passed=0" >> "$GITHUB_OUTPUT"
-          echo "changed=0" >> "$GITHUB_OUTPUT"
-          echo "failed=0" >> "$GITHUB_OUTPUT"
-          echo "total=0" >> "$GITHUB_OUTPUT"
-          echo "outcome=no-results" >> "$GITHUB_OUTPUT"
+          {
+            echo "passed=0"
+            echo "changed=0"
+            echo "failed=0"
+            echo "new=0"
+            echo "deleted=0"
+            echo "total=0"
+            echo "env-mismatch=false"
+            echo "pending=false"
+            echo "outcome=no-results"
+          } >> "$GITHUB_OUTPUT"
           {
             echo "## Tuffgal"
             echo ""
@@ -151,52 +166,217 @@ runs:
         passed=$(jq -r '.totals.passed // 0' "$results")
         changed=$(jq -r '.totals.changed // 0' "$results")
         failed=$(jq -r '.totals.failed // 0' "$results")
+        new=$(jq -r '.totals.new // 0' "$results")
+        deleted=$(jq -r '.totals.deleted // 0' "$results")
         total=$(jq -r '.totals.stories // 0' "$results")
+        env_mismatch=$(jq -r 'if .environment.mismatch == true then "true" else "false" end' "$results")
 
+        if [ "$((new + changed + deleted))" -gt 0 ]; then
+          pending=true
+        else
+          pending=false
+        fi
+
+        # Precedence mirrors tuffgal exit codes: failed (1) > env-mismatch (3) > pending (2) > pass.
         if [ "$failed" -gt 0 ]; then
           outcome="failed"
-        elif [ "$changed" -gt 0 ]; then
+        elif [ "$env_mismatch" = "true" ]; then
+          outcome="env-mismatch"
+        elif [ "$pending" = "true" ]; then
           outcome="changed"
         else
           outcome="pass"
         fi
 
-        echo "passed=$passed" >> "$GITHUB_OUTPUT"
-        echo "changed=$changed" >> "$GITHUB_OUTPUT"
-        echo "failed=$failed" >> "$GITHUB_OUTPUT"
-        echo "total=$total" >> "$GITHUB_OUTPUT"
-        echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
+        {
+          echo "passed=$passed"
+          echo "changed=$changed"
+          echo "failed=$failed"
+          echo "new=$new"
+          echo "deleted=$deleted"
+          echo "total=$total"
+          echo "env-mismatch=$env_mismatch"
+          echo "pending=$pending"
+          echo "outcome=$outcome"
+        } >> "$GITHUB_OUTPUT"
 
         {
           echo "## Tuffgal"
           echo ""
           echo "Outcome: **$outcome**"
+          if [ "$env_mismatch" = "true" ]; then
+            echo ""
+            echo "> ⚠️ Capture environment changed — expect a full re-approve of baselines."
+          fi
           echo ""
           echo "| Status | Count |"
           echo "|--------|-------|"
           echo "| Pass | $passed |"
           echo "| Changed | $changed |"
+          echo "| New | $new |"
+          echo "| Deleted | $deleted |"
           echo "| Failed | $failed |"
           echo "| Total | $total |"
         } >> "$GITHUB_STEP_SUMMARY"
 
+    - name: Assemble candidates artifact
+      if: always() && inputs.upload-artifacts == 'true' && steps.outcome.outputs.pending == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TUFFGAL_REPORT_PATH: ${{ inputs.report-path }}
+      run: |
+        set -euo pipefail
+        candidates="$TUFFGAL_REPORT_PATH/candidates"
+        # The candidate tree is written by `tuffgal run --ci`; bundle a copy of
+        # results.json alongside it so `tuffgal approve --from <dir> --prune` has
+        # the deleted/environment records it needs without a second download.
+        # Create the dir first so a deleted-only run (orphans pruned, no new
+        # candidate PNGs written) still produces an artifact carrying the
+        # deleted records the prune step depends on.
+        mkdir -p "$candidates"
+        cp "$TUFFGAL_REPORT_PATH/results.json" "$candidates/results.json"
+
     - name: Upload report
-      if: always() && inputs.upload-artifacts == 'true' && (steps.outcome.outputs.failed != '0' || steps.outcome.outputs.changed != '0' || steps.outcome.outputs.outcome == 'no-results')
+      if: always() && inputs.upload-artifacts == 'true' && (steps.outcome.outputs.failed != '0' || steps.outcome.outputs.pending == 'true' || steps.outcome.outputs.outcome == 'no-results')
       uses: actions/upload-artifact@v4
       with:
         name: tuffgal-report
         path: ${{ inputs.working-directory }}/${{ inputs.report-path }}/
         retention-days: ${{ inputs.retention-days }}
 
-    - name: Upload updated baselines
-      if: always() && inputs.upload-artifacts == 'true' && steps.outcome.outputs.changed != '0'
+    - name: Upload candidates
+      if: always() && inputs.upload-artifacts == 'true' && steps.outcome.outputs.pending == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: tuffgal-baselines
-        path: ${{ inputs.working-directory }}/${{ inputs.baselines-path }}/
+        name: tuffgal-candidates
+        path: ${{ inputs.working-directory }}/${{ inputs.report-path }}/candidates/
         retention-days: ${{ inputs.retention-days }}
 
+    - name: Post sticky PR comment
+      if: always() && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      env:
+        TUFFGAL_REPORT_PATH: ${{ inputs.report-path }}
+        TUFFGAL_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        OUTCOME: ${{ steps.outcome.outputs.outcome }}
+        PASSED: ${{ steps.outcome.outputs.passed }}
+        CHANGED: ${{ steps.outcome.outputs.changed }}
+        NEW: ${{ steps.outcome.outputs.new }}
+        DELETED: ${{ steps.outcome.outputs.deleted }}
+        FAILED: ${{ steps.outcome.outputs.failed }}
+        TOTAL: ${{ steps.outcome.outputs.total }}
+        ENV_MISMATCH: ${{ steps.outcome.outputs.env-mismatch }}
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const marker = '<!-- tuffgal-report -->';
+
+          const wd = process.env.TUFFGAL_WORKING_DIRECTORY || '.';
+          const reportPath = process.env.TUFFGAL_REPORT_PATH || 'tuffgal/report';
+          const resultsFile = path.join(wd, reportPath, 'results.json');
+
+          const outcome = process.env.OUTCOME || 'no-results';
+          const counts = {
+            passed: process.env.PASSED || '0',
+            changed: process.env.CHANGED || '0',
+            new: process.env.NEW || '0',
+            deleted: process.env.DELETED || '0',
+            failed: process.env.FAILED || '0',
+            total: process.env.TOTAL || '0',
+          };
+          const envMismatch = process.env.ENV_MISMATCH === 'true';
+
+          // Story names are a best-effort convenience read from results.json; the
+          // counts above (from the parse step) are the authoritative source.
+          let changedNames = [], newNames = [], deletedNames = [], mismatchKeys = [];
+          try {
+            const r = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
+            for (const s of r.stories || []) {
+              const statuses = [s.status].concat((s.actions || []).map(a => a.status));
+              if (statuses.includes('new')) newNames.push(s.story);
+              else if (statuses.includes('changed')) changedNames.push(s.story);
+            }
+            deletedNames = (r.deleted || []).map(d =>
+              typeof d === 'string' ? d : (d.action || d.story || d.path || JSON.stringify(d)));
+            mismatchKeys = (r.environment && r.environment.mismatchKeys) || [];
+          } catch (e) {
+            core.info(`Could not read story names from results.json: ${e.message}`);
+          }
+
+          const { owner, repo } = context.repo;
+          const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+          const pending = (Number(counts.new) || 0) + (Number(counts.changed) || 0) + (Number(counts.deleted) || 0) > 0;
+
+          const lines = [];
+          lines.push(marker);
+          lines.push('## 👁️ Tuffgal visual regression');
+          lines.push('');
+          lines.push(`Outcome: **${outcome}**`);
+          lines.push('');
+          if (envMismatch) {
+            lines.push('> ⚠️ **Capture environment changed** — the committed baselines were captured in a different environment than this CI run. Comparison still ran, but expect a full re-approve.');
+            if (mismatchKeys.length) {
+              lines.push('>');
+              lines.push('> Changed keys: ' + mismatchKeys.map(k => '`' + k + '`').join(', '));
+            }
+            lines.push('');
+          }
+          lines.push('| Status | Count |');
+          lines.push('|--------|-------|');
+          lines.push(`| Pass | ${counts.passed} |`);
+          lines.push(`| Changed | ${counts.changed} |`);
+          lines.push(`| New | ${counts.new} |`);
+          lines.push(`| Deleted | ${counts.deleted} |`);
+          lines.push(`| Failed | ${counts.failed} |`);
+          lines.push(`| Total | ${counts.total} |`);
+          lines.push('');
+
+          const nameSection = (title, names) => {
+            if (!names.length) return;
+            lines.push(`**${title}**`);
+            for (const n of names) lines.push(`- ${String(n).replace(/[\r\n]+/g, ' ')}`);
+            lines.push('');
+          };
+          nameSection('Changed', changedNames);
+          nameSection('New', newNames);
+          nameSection('Deleted', deletedNames);
+
+          if (pending) {
+            lines.push('### Approve these changes');
+            lines.push('');
+            lines.push(`[Open the run and download the **tuffgal-candidates** + **tuffgal-report** artifacts →](${runUrl})`);
+            lines.push('');
+            lines.push('Either:');
+            lines.push('');
+            lines.push('- Comment `@tuffgal approve` on this PR (requires write access), or');
+            lines.push('- Download the `tuffgal-candidates` artifact and run `npx tuffgal approve --from <extracted-dir> --prune`, then commit the updated baselines directory.');
+          } else {
+            lines.push(`[View the run →](${runUrl})`);
+          }
+
+          const body = lines.join('\n');
+          const issue_number = context.payload.pull_request.number;
+
+          // Posting the comment must never fail the job — a missing
+          // `pull-requests: write` permission degrades to a warning; the run's
+          // real outcome is already carried by the job status + step summary.
+          try {
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+          } catch (e) {
+            core.warning(`Could not post the sticky comment (is 'permissions: pull-requests: write' set?): ${e.message}`);
+          }
+
     - name: Surface harness exit code
-      if: always() && (steps.outcome.outputs.outcome == 'failed' || steps.outcome.outputs.outcome == 'no-results' || (inputs.fail-on-changed == 'true' && steps.outcome.outputs.outcome == 'changed'))
+      if: always() && (steps.outcome.outputs.outcome == 'failed' || steps.outcome.outputs.outcome == 'no-results' || steps.outcome.outputs.outcome == 'env-mismatch' || (inputs.fail-on-changed == 'true' && steps.outcome.outputs.outcome == 'changed'))
       shell: bash
       run: exit 1
