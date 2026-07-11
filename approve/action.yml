@@ -347,13 +347,35 @@ runs:
           const deletions = atHead.filter(p => !onDiskSet.has(p));
 
           // Build tree entries: blobs for present files, null-sha deletions.
+          // Blob creation is a content-generating POST per file; a real baseline
+          // set is 100+ files and a tight loop trips GitHub's secondary rate
+          // limit. Pace to ~1 request/second (GitHub's documented guidance) and
+          // retry 403/429 honoring Retry-After.
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const createBlobPaced = async (payload) => {
+            for (let attempt = 0; ; attempt++) {
+              try {
+                return await github.rest.git.createBlob(payload);
+              } catch (e) {
+                const status = e.status;
+                const retryable = (status === 403 || status === 429) && attempt < 5;
+                if (!retryable) throw e;
+                const retryAfter =
+                  Number(e.response && e.response.headers && e.response.headers['retry-after']) ||
+                  Math.min(120, 15 * 2 ** attempt);
+                core.info(`Rate limited creating blob; waiting ${retryAfter}s (attempt ${attempt + 1}/5).`);
+                await sleep(retryAfter * 1000);
+              }
+            }
+          };
           const tree = [];
           for (const f of onDisk) {
             const content = fs.readFileSync(f.absPath);
-            const blob = await github.rest.git.createBlob({
+            const blob = await createBlobPaced({
               owner, repo, content: content.toString('base64'), encoding: 'base64',
             });
             tree.push({ path: f.repoPath, mode: '100644', type: 'blob', sha: blob.data.sha });
+            await sleep(1000);
           }
           for (const p of deletions) {
             tree.push({ path: p, mode: '100644', type: 'blob', sha: null });
