@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "captureSchema": 1,
+  "tuffgalVersion": "0.2.0-alpha.1",
+  "playwrightVersion": "1.60.0",
+  "browser": "chromium",
+  "browserVersion": "148.0.7778.96",
+  "platform": "linux",
+  "captureMode": "viewport",
+  "breakpoints": [
+    {
+      "name": "desktop",
+      "width": 1280,
+      "height": 800
+    }
+  ],
+  "deviceScaleFactor": 1,
+  "frozenTime": "2026-01-15T12:00:00.000Z"
+}
