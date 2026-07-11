@@ -111,8 +111,7 @@ runs:
             return;
           }
 
-          // Immediate ack: the gate accepted, before any checkout/download/apply.
-          // A mid-run failure now reads as "heard you, then broke" instead of silence.
+          // provides an immediate acknowledgement
           await react('eyes');
 
           core.setOutput('proceed', 'true');

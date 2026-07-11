@@ -8,7 +8,9 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ### Fixed
 
-- `approve` now reacts 👀 the moment the permission gate accepts, before download or apply, so a mid-run failure is distinguishable from an unheard trigger
+`approve` now reacts "👀" the moment the permission gate accepts, before
+any other actions, so a mid-run failure is distinguishable from an
+unresponsive trigger.
 
 ## [v1.0.0] - 2026-07-10
 
