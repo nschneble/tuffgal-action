@@ -1,5 +1,5 @@
 name: Tuffgal
-description: Run JSON-driven visual regression stories with Tuffgal in CI mode. Parses results.json, uploads the report + candidate baselines as artifacts, and posts a sticky PR comment when visual changes await review.
+description: Run visual regression stories with Tuffgal in CI mode. Parses results, uploads artifacts, posts comments for review.
 author: Nick Schneble
 branding:
   icon: eye
