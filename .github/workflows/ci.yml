@@ -195,8 +195,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p tests/fixture/tuffgal/baselines/ghost-action
-          cp tests/fixture/tuffgal/baselines/visit-home/0.png \
-             tests/fixture/tuffgal/baselines/ghost-action/0.png
+          cp tests/fixture/tuffgal/baselines/visit-home/desktop.png \
+             tests/fixture/tuffgal/baselines/ghost-action/desktop.png
 
       - uses: ./
         id: tuffgal
@@ -236,26 +236,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Doctor the manifest so its recorded platform (darwin) no longer matches
-      # this Linux runner. CI mode still compares but flags the mismatch (exit 3).
-      - name: Write a mismatching manifest
+      # Doctor the committed manifest so its recorded platform (darwin) no
+      # longer matches this Linux runner. Only `platform` is rewritten — the
+      # manifest must stay schema-valid (e.g. `frozenTime` must be a string,
+      # not null) or the runner reports mismatchKeys: ["manifest"] instead of
+      # ["platform"]. CI mode still compares but flags the mismatch (exit 3).
+      - name: Doctor the manifest platform
         shell: bash
         run: |
-          cat > tests/fixture/tuffgal/baselines/manifest.json <<'JSON'
-          {
-            "schemaVersion": 1,
-            "captureSchema": 1,
-            "tuffgalVersion": "0.2.0-alpha.1",
-            "playwrightVersion": "1.49.0",
-            "browser": "chromium",
-            "browserVersion": "131.0.0.0",
-            "platform": "darwin",
-            "captureMode": "viewport",
-            "breakpoints": [{ "name": "default", "width": 1024, "height": 640 }],
-            "deviceScaleFactor": 1,
-            "frozenTime": null
-          }
-          JSON
+          manifest=tests/fixture/tuffgal/baselines/manifest.json
+          jq '.platform = "darwin"' "$manifest" > "$manifest.tmp"
+          mv "$manifest.tmp" "$manifest"
 
       - uses: ./
         id: tuffgal
