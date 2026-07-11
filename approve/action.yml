@@ -232,7 +232,64 @@ runs:
         echo "cand_dir=$CAND_DIR" >> "$GITHUB_OUTPUT"
 
     # ------------------------------------------------------------------ #
-    # 5. Seed the baselines directory from the PR head (DATA ONLY — no    #
+    # 5. Preflight the trusted default-branch CLI for `approve --from`    #
+    #    support BEFORE we invoke it. A pre-v2 tuffgal has no `--from`,   #
+    #    silently falls through to a plain `approve`, and dies with a     #
+    #    cryptic "no prior run" error. We probe the CLI's own help text   #
+    #    for the flag (robust across prerelease version ordering) and, if #
+    #    it's missing, post a pointed comment and fail. Gated identically #
+    #    to the apply step so a stale-tuffgal repo with NO candidates     #
+    #    still gets the friendlier "No candidates found" path, not this.  #
+    # ------------------------------------------------------------------ #
+    - name: Preflight tuffgal supports approve --from
+      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
+      uses: actions/github-script@v7
+      env:
+        WORKDIR: ${{ inputs.working-directory }}
+        PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
+      with:
+        script: |
+          const { execFileSync } = require('child_process');
+          const { owner, repo } = context.repo;
+
+          // Probe the ACTUAL CLI surface, not a version string. `tuffgal help`
+          // prints its full usage (and returns before loading any config), so a
+          // build that supports `approve --from` lists the flag and a pre-v2
+          // build does not. This dodges the prerelease-ordering trap where a
+          // naive semver string compare ranks `-alpha.10` below `-alpha.2`.
+          // Runs the same trusted base deps `npm ci` installed and the apply
+          // step invokes — no head-branch code is executed.
+          let help = '';
+          try {
+            help = execFileSync('npx', ['tuffgal', 'help'], {
+              cwd: process.env.WORKDIR || '.',
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+          } catch (e) {
+            // A crashed/absent CLI can't prove support; fall through to fail.
+            help = String((e && e.stdout) || '');
+            core.warning(`Could not read tuffgal help output: ${e.message}`);
+          }
+
+          if (help.includes('--from')) {
+            core.info('Installed tuffgal supports `approve --from`; proceeding.');
+            return;
+          }
+
+          await github.rest.issues.createComment({
+            owner, repo, issue_number: Number(process.env.PR_NUMBER),
+            body: [
+              '<!-- tuffgal-approve -->',
+              '🧭 The tuffgal pinned on this repo\'s default branch predates `approve --from`, so the bot can\'t promote candidate baselines from here.',
+              '',
+              'Land the tuffgal dependency bump (v2+) on the default branch, then comment `@tuffgal approve` again.',
+            ].join('\n'),
+          });
+          core.setFailed('Installed tuffgal does not support `approve --from`; bump tuffgal on the default branch.');
+
+    # ------------------------------------------------------------------ #
+    # 6. Seed the baselines directory from the PR head (DATA ONLY — no    #
     #    code is checked out or run) so prune operates against the head's #
     #    committed set, then apply the candidates via the CLI. The CLI    #
     #    owns the tree copy, prune, and manifest write.                   #
@@ -262,7 +319,7 @@ runs:
         npx tuffgal approve --from "$CAND_DIR" --prune
 
     # ------------------------------------------------------------------ #
-    # 6. Commit ONLY the baselines directory onto the PR head branch via  #
+    # 7. Commit ONLY the baselines directory onto the PR head branch via  #
     #    the git data API. Parent is the head SHA; the head branch is     #
     #    never checked out. Paths are scoped to baselines-path.           #
     # ------------------------------------------------------------------ #
