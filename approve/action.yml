@@ -2,7 +2,7 @@ name: Tuffgal Approve
 description: >-
   Commit CI-produced candidate baselines to a PR head branch in response to a
   `@tuffgal approve` comment. Verifies commenter permission, downloads the
-  tuffgal-candidates artifact from the PR's latest run, applies it via
+  candidates artifact from the PR's latest run, applies it via
   `tuffgal approve --from`, and commits ONLY the baselines directory as a bot.
   Never checks out or executes PR-branch code.
 author: Nick Schneble
@@ -15,6 +15,10 @@ inputs:
     description: Path to the baselines directory (must match `paths.baselines` in tuffgal.config.ts). Commits are strictly scoped to this directory.
     required: false
     default: "tuffgal/baselines"
+  artifact-name:
+    description: Name of the candidates artifact to promote. Consumers with multiple visual jobs per run (matrix / smoke suites) set a unique name per job so approve knows which candidate set to promote; a run carrying more than one artifact with this name fails closed.
+    required: false
+    default: "tuffgal-candidates"
   node-version:
     description: Node.js version for setup-node. Tuffgal requires Node 22+.
     required: false
@@ -158,12 +162,15 @@ runs:
       uses: actions/github-script@v7
       env:
         HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
+        PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
       with:
         script: |
           const fs = require('fs');
           const path = require('path');
           const { owner, repo } = context.repo;
           const headSha = process.env.HEAD_SHA;
+          const artifactName = process.env.ARTIFACT_NAME;
 
           // Newest completed run for this head SHA that carries the artifact.
           const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
@@ -171,17 +178,35 @@ runs:
           });
           runs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
+          // Iterate newest-first; the first run carrying at least one match is
+          // the selected run. Ambiguity WITHIN that run (a matrix / smoke suite
+          // that uploads multiple same-named artifacts) is an error, not a
+          // coin flip: fail closed rather than promote an arbitrary set.
           let artifact = null;
           for (const run of runs) {
             const arts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
               owner, repo, run_id: run.id, per_page: 100,
             });
-            const match = arts.find(a => a.name === 'tuffgal-candidates' && !a.expired);
-            if (match) { artifact = match; break; }
+            const matches = arts.filter(a => a.name === artifactName && !a.expired);
+            if (matches.length === 0) continue;
+            if (matches.length > 1) {
+              const guidance = [
+                `Run ${run.id} carries ${matches.length} artifacts named \`${artifactName}\`, so promoting one would be arbitrary.`,
+                'Set a unique `artifact-name` per visual job (matrix / smoke suites), or run a single visual job per workflow, then re-comment `@tuffgal approve`.',
+              ];
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: Number(process.env.PR_NUMBER),
+                body: ['<!-- tuffgal-approve -->', `⚠️ ${guidance[0]}`, '', guidance[1]].join('\n'),
+              });
+              core.setFailed(guidance.join(' '));
+              return;
+            }
+            artifact = matches[0];
+            break;
           }
           if (!artifact) {
             core.setOutput('found', 'false');
-            core.warning(`No tuffgal-candidates artifact found for ${headSha}.`);
+            core.warning(`No ${artifactName} artifact found for ${headSha}.`);
             return;
           }
 

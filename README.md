@@ -157,10 +157,18 @@ jobs:
         with:
           working-directory: .
           # baselines-path: tuffgal/baselines
+          # artifact-name: tuffgal-candidates
           # node-version: "22"
 ```
 
 (Also available at [`examples/tuffgal-approve.yml`](examples/tuffgal-approve.yml).)
+
+If a single workflow run uploads more than one visual job's candidates
+(matrix builds, or several `tuffgal` jobs in one run), give each job a unique
+`upload-artifact` name and set the matching `artifact-name` here so approve
+knows which candidate set to promote. Approve fails closed when the selected
+run carries more than one artifact with this name rather than promoting an
+arbitrary set.
 
 **Security model.** The approve job is deliberately conservative:
 

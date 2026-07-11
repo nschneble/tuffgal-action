@@ -30,4 +30,5 @@ jobs:
         with:
           working-directory: .
           # baselines-path: tuffgal/baselines
+          # artifact-name: tuffgal-candidates # set a unique name per visual job for matrix / smoke suites
           # node-version: "22"
