@@ -11,13 +11,64 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Lint workflows + action.yml
+      - name: Lint workflows
         uses: reviewdog/action-actionlint@v1
         with:
           fail_level: error
           reporter: github-check
+      - name: Lint example workflow template
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint examples/*.yml
 
-  smoke:
+  # Security unit test for the approve artifact validator — no live GitHub run
+  # needed. Feeds crafted zips and asserts fail-closed behavior.
+  validate-artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject malicious + accept clean artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          validator="approve/validate-artifact.sh"
+
+          # A clean candidates tree must pass.
+          mkdir -p "$work/ok/visit-home"
+          printf 'x' > "$work/ok/visit-home/0.png"
+          printf 'y' > "$work/ok/results.json"
+          ( cd "$work/ok" && zip -qr "$work/ok.zip" . )
+          if ! bash "$validator" "$work/ok.zip"; then
+            echo "FAIL: clean artifact was rejected" >&2; exit 1
+          fi
+
+          # Craft malicious zips whose ENTRY NAMES carry the attack (python's
+          # zipfile writes the literal name, unlike the `zip` CLI which
+          # normalizes paths).
+          craft() {
+            python3 - "$1" "$2" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1], 'w') as z:
+              z.writestr(sys.argv[2], b'x')
+          PY
+          }
+
+          craft "$work/evil-type.zip"     'visit-home/payload.sh'
+          craft "$work/evil-traversal.zip" '../escape.png'
+          craft "$work/evil-absolute.zip" '/etc/passwd.png'
+
+          for bad in evil-type evil-traversal evil-absolute; do
+            if bash "$validator" "$work/$bad.zip"; then
+              echo "FAIL: $bad.zip was accepted but should be rejected" >&2; exit 1
+            fi
+          done
+
+          echo "validator: all cases passed"
+
+  smoke-pass:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,16 +78,250 @@ jobs:
         with:
           working-directory: tests/fixture
 
-      - name: Assert outcome is 'pass'
+      - name: Assert outcome is 'pass' and the story actually ran
         if: always()
         env:
           OUTCOME: ${{ steps.tuffgal.outputs.outcome }}
           PASSED: ${{ steps.tuffgal.outputs.passed }}
-          CHANGED: ${{ steps.tuffgal.outputs.changed }}
+          TOTAL: ${{ steps.tuffgal.outputs.total }}
           FAILED: ${{ steps.tuffgal.outputs.failed }}
         run: |
-          echo "outcome=$OUTCOME passed=$PASSED changed=$CHANGED failed=$FAILED"
+          echo "outcome=$OUTCOME passed=$PASSED total=$TOTAL failed=$FAILED"
           if [ "$OUTCOME" != "pass" ]; then
             echo "Expected outcome 'pass', got '$OUTCOME'." >&2
+            exit 1
+          fi
+          # Guard against a false green where the story silently didn't run
+          # (all-zero totals also map to 'pass').
+          if [ "$PASSED" -lt 1 ] || [ "$PASSED" != "$TOTAL" ]; then
+            echo "Expected passed>=1 and passed==total, got passed=$PASSED total=$TOTAL." >&2
+            exit 1
+          fi
+
+  smoke-changed-new:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Remove the committed baseline so the story has no baseline to compare
+      # against — CI mode reports it as `new` and writes a candidate.
+      - name: Drop committed baseline (force a new candidate)
+        shell: bash
+        run: rm -rf tests/fixture/tuffgal/baselines/visit-home
+
+      - uses: ./
+        id: tuffgal
+        continue-on-error: true
+        with:
+          working-directory: tests/fixture
+          fail-on-changed: "false"
+
+      - name: Assert outcome 'changed' with a new candidate + results.json copy
+        if: always()
+        env:
+          OUTCOME: ${{ steps.tuffgal.outputs.outcome }}
+          NEW: ${{ steps.tuffgal.outputs.new }}
+        run: |
+          echo "outcome=$OUTCOME new=$NEW"
+          if [ "$OUTCOME" != "changed" ]; then
+            echo "Expected outcome 'changed', got '$OUTCOME'." >&2
+            exit 1
+          fi
+          if [ "$NEW" -lt 1 ]; then
+            echo "Expected at least one 'new' story, got '$NEW'." >&2
+            exit 1
+          fi
+          cand="tests/fixture/tuffgal/report/candidates"
+          # Breakpoint-agnostic: the fixture's unnamed viewport may key the
+          # candidate as 0.png or a named breakpoint.
+          if ! find "$cand/visit-home" -name '*.png' -type f | grep -q .; then
+            echo "Expected a candidate PNG under $cand/visit-home/." >&2
+            find "$cand" -type f || true
+            exit 1
+          fi
+          if [ ! -f "$cand/results.json" ]; then
+            echo "Expected results.json copy inside the candidates artifact." >&2
+            exit 1
+          fi
+
+  smoke-changed-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keep the committed baseline but change the rendered page so the compare
+      # drifts — exercises the genuine `changed` path, not just missing-baseline.
+      - name: Drift the rendered page
+        shell: bash
+        run: sed -i 's/#ef4444/#000000/' tests/fixture/public/index.html
+
+      - uses: ./
+        id: tuffgal
+        continue-on-error: true
+        with:
+          working-directory: tests/fixture
+          fail-on-changed: "false"
+
+      - name: Assert outcome 'changed' with a changed candidate
+        if: always()
+        env:
+          OUTCOME: ${{ steps.tuffgal.outputs.outcome }}
+          CHANGED: ${{ steps.tuffgal.outputs.changed }}
+        run: |
+          echo "outcome=$OUTCOME changed=$CHANGED"
+          if [ "$OUTCOME" != "changed" ]; then
+            echo "Expected outcome 'changed', got '$OUTCOME'." >&2
+            exit 1
+          fi
+          if [ "$CHANGED" -lt 1 ]; then
+            echo "Expected at least one 'changed' story, got '$CHANGED'." >&2
+            exit 1
+          fi
+          cand="tests/fixture/tuffgal/report/candidates"
+          if ! find "$cand/visit-home" -name '*.png' -type f | grep -q .; then
+            echo "Expected a candidate PNG for the drifted story." >&2
+            find "$cand" -type f || true
+            exit 1
+          fi
+
+  smoke-deleted:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Add an orphan baseline with no matching story/action so CI mode reports
+      # it as `deleted`. The committed visit-home baseline still passes.
+      - name: Plant an orphan baseline
+        shell: bash
+        run: |
+          mkdir -p tests/fixture/tuffgal/baselines/ghost-action
+          cp tests/fixture/tuffgal/baselines/visit-home/0.png \
+             tests/fixture/tuffgal/baselines/ghost-action/0.png
+
+      - uses: ./
+        id: tuffgal
+        continue-on-error: true
+        with:
+          working-directory: tests/fixture
+          fail-on-changed: "false"
+
+      - name: Assert orphan reported as deleted + candidates carries the record
+        if: always()
+        env:
+          OUTCOME: ${{ steps.tuffgal.outputs.outcome }}
+          DELETED: ${{ steps.tuffgal.outputs.deleted }}
+        run: |
+          echo "outcome=$OUTCOME deleted=$DELETED"
+          if [ "$OUTCOME" != "changed" ]; then
+            echo "Expected outcome 'changed' (pending review), got '$OUTCOME'." >&2
+            exit 1
+          fi
+          if [ "$DELETED" -lt 1 ]; then
+            echo "Expected at least one 'deleted' orphan, got '$DELETED'." >&2
+            exit 1
+          fi
+          copy="tests/fixture/tuffgal/report/candidates/results.json"
+          if [ ! -f "$copy" ]; then
+            echo "Expected results.json copy in candidates even for a deleted-only run." >&2
+            exit 1
+          fi
+          n=$(jq -r '.deleted | length' "$copy")
+          if [ "$n" -lt 1 ]; then
+            echo "Expected results.json .deleted to be populated, got length $n." >&2
+            exit 1
+          fi
+
+  smoke-env-mismatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Doctor the manifest so its recorded platform (darwin) no longer matches
+      # this Linux runner. CI mode still compares but flags the mismatch (exit 3).
+      - name: Write a mismatching manifest
+        shell: bash
+        run: |
+          cat > tests/fixture/tuffgal/baselines/manifest.json <<'JSON'
+          {
+            "schemaVersion": 1,
+            "captureSchema": 1,
+            "tuffgalVersion": "0.2.0-alpha.1",
+            "playwrightVersion": "1.49.0",
+            "browser": "chromium",
+            "browserVersion": "131.0.0.0",
+            "platform": "darwin",
+            "captureMode": "viewport",
+            "breakpoints": [{ "name": "default", "width": 1024, "height": 640 }],
+            "deviceScaleFactor": 1,
+            "frozenTime": null
+          }
+          JSON
+
+      - uses: ./
+        id: tuffgal
+        continue-on-error: true
+        with:
+          working-directory: tests/fixture
+          fail-on-changed: "false"
+
+      - name: Assert outcome 'env-mismatch' driven by platform, no failures
+        if: always()
+        env:
+          OUTCOME: ${{ steps.tuffgal.outputs.outcome }}
+          ENV_MISMATCH: ${{ steps.tuffgal.outputs.env-mismatch }}
+          FAILED: ${{ steps.tuffgal.outputs.failed }}
+        run: |
+          echo "outcome=$OUTCOME env-mismatch=$ENV_MISMATCH failed=$FAILED"
+          if [ "$OUTCOME" != "env-mismatch" ]; then
+            echo "Expected outcome 'env-mismatch', got '$OUTCOME'." >&2
+            exit 1
+          fi
+          if [ "$ENV_MISMATCH" != "true" ]; then
+            echo "Expected env-mismatch output 'true', got '$ENV_MISMATCH'." >&2
+            exit 1
+          fi
+          # Precedence: env-mismatch must be reached without any failed story
+          # (failed would outrank it), proving platform drove the mismatch.
+          if [ "$FAILED" != "0" ]; then
+            echo "Expected failed=0 for the env-mismatch case, got '$FAILED'." >&2
+            exit 1
+          fi
+          results="tests/fixture/tuffgal/report/results.json"
+          if ! jq -e '.environment.mismatchKeys | index("platform")' "$results" >/dev/null; then
+            echo "Expected 'platform' among environment.mismatchKeys." >&2
+            jq -r '.environment' "$results" || true
+            exit 1
+          fi
+
+  smoke-fail-on-changed-default:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A pending change must FAIL the job under the new default (fail-on-changed
+      # defaults to true) — the headline breaking change of v1.
+      - name: Drop committed baseline (force a pending change)
+        shell: bash
+        run: rm -rf tests/fixture/tuffgal/baselines/visit-home
+
+      - uses: ./
+        id: tuffgal
+        continue-on-error: true
+        with:
+          working-directory: tests/fixture
+
+      - name: Assert the action failed the step on a pending change
+        if: always()
+        env:
+          STEP_OUTCOME: ${{ steps.tuffgal.outcome }}
+          RESULT_OUTCOME: ${{ steps.tuffgal.outputs.outcome }}
+        run: |
+          echo "step-outcome=$STEP_OUTCOME result-outcome=$RESULT_OUTCOME"
+          if [ "$RESULT_OUTCOME" != "changed" ]; then
+            echo "Expected result outcome 'changed', got '$RESULT_OUTCOME'." >&2
+            exit 1
+          fi
+          if [ "$STEP_OUTCOME" != "failure" ]; then
+            echo "Expected the action step to FAIL under default fail-on-changed=true, got '$STEP_OUTCOME'." >&2
             exit 1
           fi
