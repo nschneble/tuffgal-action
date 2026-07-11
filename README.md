@@ -159,7 +159,7 @@ jobs:
           # baselines-path: tuffgal/baselines
           # artifact-name: tuffgal-candidates
           # node-version: "22"
-          # token: ${{ secrets.TUFFGAL_APPROVE_TOKEN }} # opt-in PAT/App token so the check re-runs — see below
+          # token: ${{ secrets.TUFFGAL_APPROVE_TOKEN }}
 ```
 
 (Also available at [`examples/tuffgal-approve.yml`](examples/tuffgal-approve.yml).)

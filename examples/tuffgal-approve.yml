@@ -32,8 +32,4 @@ jobs:
           # baselines-path: tuffgal/baselines
           # artifact-name: tuffgal-candidates # set a unique name per visual job for matrix / smoke suites
           # node-version: "22"
-          # Opt-in PAT / GitHub App token so the pushed baselines retrigger the
-          # visual check automatically (GITHUB_TOKEN cannot — recursion
-          # prevention). Widens the commit step's blast radius; see the README
-          # "Re-running the visual check (the token input)" trade-off.
           # token: ${{ secrets.TUFFGAL_APPROVE_TOKEN }}

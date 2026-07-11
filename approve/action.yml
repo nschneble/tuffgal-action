@@ -39,15 +39,7 @@ inputs:
     required: false
     default: "tuffgal-bot@users.noreply.github.com"
   token:
-    description: >-
-      Token used for the final baseline commit + updateRef (and the reaction +
-      success comment). Defaults to `GITHUB_TOKEN`, which GitHub deliberately
-      will NOT use to retrigger workflows (recursion prevention) — so the
-      consumer's visual regression check does not re-run on its own after the
-      baselines are committed. Supply a PAT or GitHub App installation token to
-      have the check re-run automatically against the new baselines. Trade-off:
-      a non-default token widens the blast radius of the path-scoped commit
-      step, so it is opt-in.
+    description: Token for the baseline commit and updateRef. Defaults to `GITHUB_TOKEN`, which will not retrigger the visual check (GitHub's recursion prevention); supply a PAT or GitHub App installation token to have it re-run automatically. See the README approve section for the trade-off.
     required: false
     default: ${{ github.token }}
 
