@@ -60,7 +60,24 @@ jobs:
           craft "$work/evil-traversal.zip" '../escape.png'
           craft "$work/evil-absolute.zip" '/etc/passwd.png'
 
-          for bad in evil-type evil-traversal evil-absolute; do
+          # A symlink entry carries an allowed extension but is not a regular
+          # file. The mode is stamped into the entry's external_attr high bits
+          # (0o120777 = symlink) and the link target is the entry data — this is
+          # how a real zip records a symlink, and how an attacker would smuggle
+          # one past a names-only check.
+          craft_symlink() {
+            python3 - "$1" "$2" "$3" <<'PY'
+          import sys, zipfile
+          info = zipfile.ZipInfo(sys.argv[2])
+          info.external_attr = 0o120777 << 16
+          with zipfile.ZipFile(sys.argv[1], 'w') as z:
+              z.writestr(info, sys.argv[3])
+          PY
+          }
+
+          craft_symlink "$work/evil-symlink.zip" 'visit-home/0.png' '/etc/passwd'
+
+          for bad in evil-type evil-traversal evil-absolute evil-symlink; do
             if bash "$validator" "$work/$bad.zip"; then
               echo "FAIL: $bad.zip was accepted but should be rejected" >&2; exit 1
             fi
