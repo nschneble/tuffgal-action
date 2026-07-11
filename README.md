@@ -195,6 +195,43 @@ with a note. Fork contributors use the implicit path above (download the
 candidates artifact, run `tuffgal approve --from`, and commit to their fork
 branch). Broader fork support is intentionally out of scope for now.
 
+## Migrating an existing consumer
+
+Moving a repo from v0 to v1 takes two PRs, and the order matters. Both
+constraints below fall out of the [approve command](#command-tuffgal-approve)'s
+trusted-code-only security model, so the fix is sequencing, not configuration.
+
+1. **Merge a small PR to the default branch first.** It carries
+   `.github/workflows/tuffgal-approve.yml` (from
+   [`examples/tuffgal-approve.yml`](examples/tuffgal-approve.yml)) plus the
+   tuffgal dependency bump (`>= 0.2.0-alpha.1`) in `package.json` and the
+   lockfile.
+2. **Open the migration PR.** Bump the workflow's `uses:` to
+   `nschneble/tuffgal-action@v1` and delete the stale baselines so CI proposes
+   fresh candidates.
+3. **Comment `@tuffgal approve` on the migration PR.** With step 1 already on
+   the default branch, the bot fires and commits the new baselines to the PR
+   head branch.
+
+Two reasons the pre-step PR has to land first:
+
+- **`issue_comment` workflows run the definition from the default branch.**
+  GitHub always executes the version of `tuffgal-approve.yml` that lives on the
+  default branch, never the copy on the PR head. So the workflow cannot fire on
+  the very PR that introduces it. It has to be on the default branch already.
+- **The approve sub-action runs `npm ci` from the default branch's lockfile.**
+  It checks out the default branch (never PR-branch code) and installs from
+  _that_ lockfile, so the tuffgal bump (`>= 0.2.0-alpha.1`) must also be on the
+  default branch before the first `@tuffgal approve` resolves the right CLI.
+
+**Neither pre-step is a security hole.** The workflow is inert until someone
+comments `@tuffgal approve`, and even then it re-validates the command and the
+commenter's write access before touching anything (see the
+[security model](#approving-candidate-baselines) above). Merging the dependency
+bump ahead of the `@v1` workflow is fine too: the new CLI running against the
+old baselines is tolerated by the v0 action's soft gate, where `fail-on-changed`
+defaults to `false`, so the pre-step PR's own visual run cannot block the merge.
+
 ## Reviewing a failed run
 
 When a job fails, the workflow run page lists `tuffgal-report` as a
