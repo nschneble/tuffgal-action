@@ -170,7 +170,9 @@ jobs:
   API.
 - It verifies the commenter's repository permission (`write` / `maintain` /
   `admin`) **before** any checkout, download, or write. Unauthorized commenters
-  get a 👀 reaction and nothing else.
+  get a 👀 reaction and nothing else. An accepted command also gets an immediate
+  👀 ack (before any work) so a mid-run failure is distinguishable from an
+  unheard trigger, then 🚀 once the baselines land.
 - It writes **only** files from the candidates artifact, path-scoped to the
   baselines directory. Absolute paths, path traversal, or unexpected file
   types in the artifact fail the job closed.

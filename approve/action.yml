@@ -111,6 +111,10 @@ runs:
             return;
           }
 
+          // Immediate ack: the gate accepted, before any checkout/download/apply.
+          // A mid-run failure now reads as "heard you, then broke" instead of silence.
+          await react('eyes');
+
           core.setOutput('proceed', 'true');
           core.setOutput('pr_number', String(issue.number));
           core.setOutput('comment_id', String(comment.id));
