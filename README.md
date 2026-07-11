@@ -159,6 +159,7 @@ jobs:
           # baselines-path: tuffgal/baselines
           # artifact-name: tuffgal-candidates
           # node-version: "22"
+          # token: ${{ secrets.TUFFGAL_APPROVE_TOKEN }} # opt-in PAT/App token so the check re-runs — see below
 ```
 
 (Also available at [`examples/tuffgal-approve.yml`](examples/tuffgal-approve.yml).)
@@ -168,6 +169,29 @@ give each job a unique `upload-artifact` name and set the matching
 `artifact-name` here so approve knows which candidate set to promote.
 Approve fails closed when the selected run carries more than one artifact
 with this name rather than promoting an arbitrary set.
+
+**Re-running the visual check (the `token` input).** By default the bot commits
+the approved baselines with the workflow's `GITHUB_TOKEN`. GitHub deliberately
+does **not** trigger workflows for commits pushed with `GITHUB_TOKEN` (recursion
+prevention), so your visual regression check will **not** re-run on its own after
+approval — it stays stale/failing until you kick it. The success comment tells
+you how: close and reopen the PR, push an empty commit, or re-run the visual
+workflow from the **Actions** tab.
+
+To make the pushed commit trigger workflows normally — so the check re-runs and
+clears itself automatically — pass a PAT or GitHub App installation token via the
+`token` input:
+
+```yaml
+- uses: nschneble/tuffgal-action/approve@v1
+  with:
+    token: ${{ secrets.TUFFGAL_APPROVE_TOKEN }}
+```
+
+**Trade-off.** A PAT / App token widens the blast radius of the commit step: it
+pushes with broader identity and reach than the scoped `GITHUB_TOKEN`, so it is
+opt-in. Leave `token` unset to keep the conservative default and kick the check
+by hand.
 
 **Security model.** The approve job is deliberately conservative:
 

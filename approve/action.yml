@@ -4,7 +4,10 @@ description: >-
   `@tuffgal approve` comment. Verifies commenter permission, downloads the
   candidates artifact from the PR's latest run, applies it via
   `tuffgal approve --from`, and commits ONLY the baselines directory as a bot.
-  Never checks out or executes PR-branch code.
+  Never checks out or executes PR-branch code. By default the commit is made
+  with `GITHUB_TOKEN`, which does not retrigger the consumer's visual workflow
+  (GitHub's recursion prevention); pass a PAT / GitHub App token via `token`
+  to have the check re-run automatically.
 author: Nick Schneble
 branding:
   icon: check-circle
@@ -35,6 +38,18 @@ inputs:
     description: Email used for the baseline commit author/committer.
     required: false
     default: "tuffgal-bot@users.noreply.github.com"
+  token:
+    description: >-
+      Token used for the final baseline commit + updateRef (and the reaction +
+      success comment). Defaults to `GITHUB_TOKEN`, which GitHub deliberately
+      will NOT use to retrigger workflows (recursion prevention) — so the
+      consumer's visual regression check does not re-run on its own after the
+      baselines are committed. Supply a PAT or GitHub App installation token to
+      have the check re-run automatically against the new baselines. Trade-off:
+      a non-default token widens the blast radius of the path-scoped commit
+      step, so it is opt-in.
+    required: false
+    default: ${{ github.token }}
 
 runs:
   using: composite
@@ -350,6 +365,14 @@ runs:
     # 7. Commit ONLY the baselines directory onto the PR head branch via  #
     #    the git data API. Parent is the head SHA; the head branch is     #
     #    never checked out. Paths are scoped to baselines-path.           #
+    #                                                                     #
+    #    The commit, updateRef, reaction, and success comment all use the #
+    #    `token` input (default `GITHUB_TOKEN`). A push made with          #
+    #    `GITHUB_TOKEN` will NOT retrigger the consumer's visual workflow  #
+    #    (GitHub's recursion prevention), so the success comment tells the #
+    #    maintainer how to kick it; supplying a PAT / App token makes the  #
+    #    check re-run automatically. TOKEN_IS_DEFAULT carries that fact    #
+    #    into the script without exposing the token value.                #
     # ------------------------------------------------------------------ #
     - name: Commit baselines to PR head branch
       if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
@@ -363,7 +386,11 @@ runs:
         COMMENT_ID: ${{ steps.gate.outputs.comment_id }}
         GIT_USER_NAME: ${{ inputs.git-user-name }}
         GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+        # 'true'/'false' string from a GitHub-expression comparison; the token
+        # value itself never reaches the environment or the logs.
+        TOKEN_IS_DEFAULT: ${{ inputs.token == github.token }}
       with:
+        github-token: ${{ inputs.token }}
         script: |
           const fs = require('fs');
           const path = require('path');
@@ -498,12 +525,30 @@ runs:
           await github.rest.reactions.createForIssueComment({
             owner, repo, comment_id: Number(process.env.COMMENT_ID), content: 'rocket',
           });
+
+          // Whether the commit was made with the default GITHUB_TOKEN. GitHub
+          // does not fire workflows for GITHUB_TOKEN pushes (recursion
+          // prevention), so with the default token the visual check will NOT
+          // re-run on its own — tell the maintainer how to kick it. A custom
+          // PAT / App token pushes like a normal user, so the check re-runs.
+          const tokenIsDefault = process.env.TOKEN_IS_DEFAULT === 'true';
+          const committed = `🚀 Committed candidate baselines to \`${headRef}\` as [\`${commit.data.sha.slice(0, 7)}\`](${context.serverUrl}/${owner}/${repo}/commit/${commit.data.sha}).`;
+          const tail = tokenIsDefault
+            ? [
+                '',
+                '⚠️ The visual regression check will **not** re-run on its own — GitHub does not trigger workflows for commits pushed with `GITHUB_TOKEN`. Kick it with any of:',
+                '',
+                '- close and reopen this PR,',
+                '- push an empty commit (`git commit --allow-empty -m "retrigger" && git push`), or',
+                '- re-run the visual workflow from the **Actions** tab.',
+                '',
+                'To make the check clear itself automatically, pass a PAT / GitHub App token via the `token` input (see the README trade-off).',
+              ]
+            : [
+                '',
+                'The visual regression check will re-run automatically against the new baselines and should pass.',
+              ];
           await github.rest.issues.createComment({
             owner, repo, issue_number: Number(process.env.PR_NUMBER),
-            body: [
-              '<!-- tuffgal-approve -->',
-              `🚀 Committed candidate baselines to \`${headRef}\` as [\`${commit.data.sha.slice(0, 7)}\`](${context.serverUrl}/${owner}/${repo}/commit/${commit.data.sha}).`,
-              '',
-              'Pull the branch to get the updated baselines. The next visual regression run should pass.',
-            ].join('\n'),
+            body: ['<!-- tuffgal-approve -->', committed, ...tail].join('\n'),
           });
