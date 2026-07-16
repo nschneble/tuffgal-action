@@ -6,7 +6,15 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
-_Nothing just yet_
+### Added
+
+- `pages-token` input to auto-enable the per-PR Pages preview
+  - Pass an admin PAT / GitHub App token to have the first run create the Pages site; defaults to `GITHUB_TOKEN`
+
+### Fixed
+
+- Docs no longer claim `GITHUB_TOKEN` + `pages: write` auto-enables Pages — GitHub reserves site creation for a repo-admin credential, so enable Pages once by hand or supply `pages-token`
+- The auto-enable warning now names the concrete fix (enable by hand, or set `pages-token`)
 
 ## [v1.2.0] - 2026-07-16
 

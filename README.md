@@ -29,8 +29,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write # push the per-PR Pages preview
-  pages: write # let the preview auto-enable Pages on first run
+  contents: write # push the per-PR Pages preview to gh-pages (drop to `read` if pages-preview is off)
   pull-requests: write # required for the sticky PR comment
 
 jobs:
@@ -80,9 +79,19 @@ screenshots expanded.
 
 It needs two things on the consumer repo:
 
-- **`contents: write`** on the job so the preview can push to `gh-pages`
-- **GitHub Pages enabled** for public repos. Grant `pages: write` and the
-  first run enables Pages for you
+- **`contents: write`** on the job so the preview can push to `gh-pages`.
+- **GitHub Pages enabled**, source = the `gh-pages` branch. PUBLIC repos only
+  (private Pages is Enterprise-only). **Enable it once, by hand** — Settings →
+  Pages → _Deploy from a branch_ → `gh-pages` / root. The branch is created on
+  the first run, so you can turn Pages on right after (or before — an empty
+  branch is fine).
+
+> **Why the manual step?** GitHub reserves Pages **site creation** for a
+> repo-admin credential. The `GITHUB_TOKEN` the action runs under can _push_ the
+> branch (with `contents: write`) but cannot _create_ the site, so it can't flip
+> Pages on for you. To skip the manual click, pass an admin PAT / GitHub App
+> token via the **`pages-token`** input — then the first run enables Pages
+> itself. (`pages: write` alone does **not** grant site creation.)
 
 The preview is best-effort. If Pages is off, the repo is private, or the
 push is blocked, the step logs a warning and the comment falls back to the
@@ -103,6 +112,7 @@ contract the CI-owned-baselines model asks of a consumer.
 | `node-version`      | `22`                | Node.js version (Tuffgal requires Node 22+)                                                                                                                                                                       |
 | `pages-preview`     | `true`              | Publish the report + baselines to a per-PR GitHub Pages preview so the comment can deep-link to changed stories. Needs `contents: write` + Pages enabled; PUBLIC repos only; degrades to artifact links otherwise |
 | `pages-branch`      | `gh-pages`          | Branch the per-PR preview is published to (only used when `pages-preview` is on)                                                                                                                                  |
+| `pages-token`       | `${{ github.token }}` | Token to push the preview branch and auto-enable Pages. The default `GITHUB_TOKEN` pushes but can't create the Pages site (enable Pages once by hand); pass an admin PAT / App token to auto-enable it          |
 | `report-path`       | `tuffgal/report`    | Path to the report directory, relative to `working-directory` (must match `paths.report` in `tuffgal.config.ts`)                                                                                                  |
 | `retention-days`    | `14`                | Artifact retention                                                                                                                                                                                                |
 | `setup-script`      | `''`                | Optional npm script to run before the harness (e.g. DB bootstrap)                                                                                                                                                 |

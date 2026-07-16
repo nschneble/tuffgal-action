@@ -45,6 +45,17 @@ inputs:
     description: Branch the per-PR preview is published to. Only used when pages-preview is true.
     required: false
     default: "gh-pages"
+  pages-token:
+    description: >-
+      Token used to push the preview branch AND to auto-enable Pages on the
+      first run. Defaults to `GITHUB_TOKEN`, which can push (with
+      `contents: write`) but CANNOT create the Pages site — GitHub reserves site
+      creation for a repo-admin credential, so with the default token you must
+      enable Pages once by hand (Settings → Pages → source: the pages branch).
+      Supply a PAT or GitHub App installation token with admin/Pages write to
+      have the first run enable Pages for you.
+    required: false
+    default: ${{ github.token }}
   report-path:
     description: Path to the report directory written by Tuffgal. Must match `paths.report` in tuffgal.config.ts. Relative to working-directory.
     required: false
@@ -289,8 +300,12 @@ runs:
         PAGES_BRANCH: ${{ inputs.pages-branch }}
         GIT_USER_NAME: tuffgal[bot]
         GIT_USER_EMAIL: tuffgal-bot@users.noreply.github.com
-        GITHUB_TOKEN: ${{ github.token }}
+        # Same token authenticates the git push and the Pages API calls below.
+        # Defaults to GITHUB_TOKEN (pushes fine, cannot create the Pages site);
+        # a PAT/App token with admin lets createPagesSite auto-enable Pages.
+        GITHUB_TOKEN: ${{ inputs.pages-token }}
       with:
+        github-token: ${{ inputs.pages-token }}
         script: |
           const fs = require('fs');
           const path = require('path');
@@ -357,9 +372,12 @@ runs:
 
           // 2. Resolve the canonical Pages base URL (handles project vs user/org
           //    pages and custom domains). If Pages is not yet enabled, try to
-          //    enable it against the branch we just pushed — needs `pages: write`.
-          //    Either failure leaves preview-url empty (branch is still pushed,
-          //    so enabling Pages manually later makes past previews resolve).
+          //    enable it against the branch we just pushed. Site CREATION needs a
+          //    repo-admin credential: the default GITHUB_TOKEN can push but
+          //    cannot create the site (403), so auto-enable only works when
+          //    `pages-token` is a PAT/App token with admin. Either failure leaves
+          //    preview-url empty — the branch is still pushed, so enabling Pages
+          //    by hand later makes past previews resolve.
           let baseUrl = '';
           const readBase = async () => {
             const pages = await github.rest.repos.getPages({ owner, repo });
@@ -373,7 +391,10 @@ runs:
               core.info(`Enabled GitHub Pages for ${owner}/${repo} (source: ${branch}).`);
               baseUrl = await readBase();
             } catch (e2) {
-              core.warning(`GitHub Pages is not enabled and could not be enabled automatically (${e2.status || e2.message}); the branch was pushed. Enable Pages (source: the ${branch} branch, needs \`pages: write\`) to get deep-link previews. Falling back to artifact links.`);
+              const hint = (e2.status === 403 || e2.status === 404)
+                ? `The default GITHUB_TOKEN cannot create a Pages site. Either enable Pages once by hand (Settings → Pages → source: the ${branch} branch), or pass an admin PAT/App token via the \`pages-token\` input to auto-enable it.`
+                : `Enable Pages (source: the ${branch} branch) to get deep-link previews.`;
+              core.warning(`GitHub Pages is not enabled and could not be enabled automatically (${e2.status || e2.message}); the branch was pushed. ${hint} Falling back to artifact links.`);
               core.setOutput('preview-url', '');
               return;
             }
