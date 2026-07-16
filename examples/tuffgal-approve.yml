@@ -1,8 +1,10 @@
 # Copy this into your consumer repo at .github/workflows/tuffgal-approve.yml
-# It lets maintainers approve Tuffgal candidate baselines by commenting
-# `@tuffgal approve` on a pull request. The bot verifies the commenter has
-# write access, downloads the tuffgal-candidates artifact from the PR's latest
-# run, and commits the approved baselines to the PR head branch.
+# It lets maintainers approve Tuffgal candidate baselines two ways:
+#   - tick the "Approve these baselines" checkbox in the bot's PR comment, or
+#   - comment `@tuffgal approve` on the pull request.
+# Either way the bot verifies the approver has write access, downloads the
+# tuffgal-candidates artifact from the PR's latest run, and commits the approved
+# baselines to the PR head branch.
 #
 # Fork PRs: the default token cannot push to fork branches, so fork
 # contributors approve locally instead — download the tuffgal-candidates
@@ -11,15 +13,23 @@ name: tuffgal-approve
 
 on:
   issue_comment:
-    types: [created]
+    # `created` catches the `@tuffgal approve` mention; `edited` catches a ticked
+    # approve checkbox in the bot's sticky report comment.
+    types: [created, edited]
 
 jobs:
   approve:
-    # Only PR comments that mention the approve command. The action re-validates
-    # the command and the commenter's permission before doing anything.
+    # Cheap pre-filter; the action re-validates the trigger and the approver's
+    # permission before doing anything. Two shapes: the mention, or an edited
+    # comment whose approve box is ticked. The `[x]` + marker pair keeps an
+    # unrelated ticked task list from triggering.
     if: >-
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '@tuffgal approve')
+      github.event.issue.pull_request && (
+        contains(github.event.comment.body, '@tuffgal approve') ||
+        (github.event.action == 'edited' &&
+         contains(github.event.comment.body, 'tuffgal-approve-box') &&
+         contains(github.event.comment.body, '[x] <!-- tuffgal-approve-box'))
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: write # commit baselines to the PR head branch

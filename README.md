@@ -29,7 +29,8 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write # push the per-PR Pages preview (drop to `read` if pages-preview is off)
+  pages: write # let the preview auto-enable Pages on first run (optional — enable Pages by hand instead)
   pull-requests: write # required for the sticky PR comment
 
 jobs:
@@ -69,6 +70,29 @@ For a static-site project that doesn't need a database, you can drop the
 > its outcome via the job status and step summary). On a non-PR event
 > (`push`, `workflow_dispatch`) the comment step skips silently.
 
+### Per-PR preview (deep-linkable report)
+
+When `pages-preview` is on (the default), a run with pending changes publishes
+the report **and** baselines to a per-PR GitHub Pages preview
+(`gh-pages` branch, `pr-<n>/` subdir). The sticky comment then carries, for each
+changed story, inline **baseline / actual / diff** thumbnails and an **Open in
+report →** link that jumps straight to that story with its screenshots
+expanded — no artifact zip to download, unzip, and open.
+
+It needs two things on the consumer repo:
+
+- **`contents: write`** on the job (shown above) so the preview can push to
+  `gh-pages`.
+- **GitHub Pages enabled**, source = the `gh-pages` branch. PUBLIC repos only —
+  Pages for private repos is GitHub Enterprise-only. Grant **`pages: write`**
+  and the first run enables Pages for you (against the branch it just pushed);
+  otherwise enable it by hand once and every past/future preview resolves.
+
+The preview is **best-effort**: if Pages is off, the repo is private, or the
+push is blocked, the step logs a warning and the comment falls back to the
+artifact-download links. Set `pages-preview: false` to skip it entirely (then
+`contents: read` is enough).
+
 Your app must boot and seed deterministically in CI — that's the one contract
 the CI-owned-baselines model asks of a consumer.
 
@@ -82,6 +106,8 @@ the CI-owned-baselines model asks of a consumer.
 | `headed`            | `false`             | Run with `--headed` (rarely useful in CI)                                                                                                                                              |
 | `install-browsers`  | `true`              | Run `npx playwright install --with-deps chromium` before the harness                                                                                                                   |
 | `node-version`      | `22`                | Node.js version (Tuffgal requires Node 22+)                                                                                                                                            |
+| `pages-preview`     | `true`              | Publish the report + baselines to a per-PR GitHub Pages preview so the comment can deep-link to changed stories. Needs `contents: write` + Pages enabled; PUBLIC repos only; degrades to artifact links otherwise |
+| `pages-branch`      | `gh-pages`          | Branch the per-PR preview is published to (only used when `pages-preview` is on)                                                                                                       |
 | `report-path`       | `tuffgal/report`    | Path to the report directory, relative to `working-directory` (must match `paths.report` in `tuffgal.config.ts`)                                                                       |
 | `retention-days`    | `14`                | Artifact retention                                                                                                                                                                     |
 | `setup-script`      | `''`                | Optional npm script to run before the harness (e.g. DB bootstrap)                                                                                                                      |
@@ -100,6 +126,7 @@ the CI-owned-baselines model asks of a consumer.
 | `new`          | Number of stories with no committed baseline yet (candidate written)                                                        |
 | `outcome`      | One of `pass`, `changed` (pending new/changed/deleted review), `env-mismatch`, `failed`, or `no-results`                    |
 | `passed`       | Number of stories that passed                                                                                               |
+| `preview-url`  | Base URL of the per-PR Pages preview (e.g. `https://owner.github.io/repo/pr-41`), or empty when the preview was off/skipped/failed. Append `/report/index.html` for the report |
 | `total`        | Total stories executed                                                                                                      |
 
 `outcome` follows Tuffgal's exit-code precedence: `failed` (broken stories) >
@@ -116,37 +143,55 @@ review) > `pass`.
 6. Parse `<report-path>/results.json` for `totals.{passed,changed,new,deleted,failed,stories}` and `environment.mismatch`, then write outputs + a `$GITHUB_STEP_SUMMARY` table
 7. Copy `results.json` into `<report-path>/candidates/` so the candidates artifact is self-contained for `tuffgal approve --from`
 8. Upload `<report-path>/` as `tuffgal-report` (on failures, no-results, or pending changes) and `<report-path>/candidates/` as `tuffgal-candidates` (when visual changes await review)
-9. On a PR event, upsert a sticky comment (marker `<!-- tuffgal-report -->`) with the totals, changed/new/deleted story names, an environment-mismatch banner when set, a link to the run, and approve instructions
-10. Re-surface a non-zero exit when `outcome` is `failed`, `no-results`, `env-mismatch`, or `changed` (when `fail-on-changed: true`)
+9. On a PR with pending changes (and `pages-preview: true`), publish `<report-path>/` + `<baselines-path>/` to the `gh-pages` branch under `pr-<n>/`, so the report and every PNG have a real URL (best-effort — a failure just leaves the comment on the artifact-download path)
+10. On a PR event, upsert a sticky comment (marker `<!-- tuffgal-report -->`) with the totals and, when a preview published, per-changed-story inline baseline/actual/diff thumbnails + an **Open in report →** deep-link; otherwise the plain story names + artifact-download instructions. Includes an environment-mismatch banner when set, an approve checkbox + `@tuffgal approve` command, and a link to the run
+11. Re-surface a non-zero exit when `outcome` is `failed`, `no-results`, `env-mismatch`, or `changed` (when `fail-on-changed: true`)
 
 ## Approving candidate baselines
 
 When a run reports `changed` (any `new` / `changed` / `deleted`), the sticky PR
 comment lists the affected stories and links the `tuffgal-candidates` artifact.
-There are two ways to approve.
+There are two clickable ways to approve, both driven by the same workflow below.
+
+### Checkbox: tick the box in the comment
+
+The sticky comment carries an **Approve these baselines** checkbox. A maintainer
+ticks it; the workflow fires on the `edited` event, verifies the person who
+ticked it has write access, and promotes the candidates exactly like the
+command below. This is the one-click path — no command to remember. Ticking is
+recognized only in the bot's own report comment (it carries a hidden
+`tuffgal-approve-box` marker), so an unrelated task list elsewhere on the PR
+can't trigger it, and the bot's own comment refreshes never loop back into an
+approval.
 
 ### Command: `@tuffgal approve`
 
-Add the approve workflow to your consumer repo and a maintainer can comment
-`@tuffgal approve` on the PR. The bot verifies the commenter has write access,
-downloads the candidates artifact from the PR's latest run, applies it with
-`tuffgal approve --from <dir> --prune`, and commits the updated baselines to
-the PR head branch.
+Alternatively a maintainer comments `@tuffgal approve` on the PR. The bot
+verifies the commenter has write access, downloads the candidates artifact from
+the PR's latest run, applies it with `tuffgal approve --from <dir> --prune`, and
+commits the updated baselines to the PR head branch.
 
-Copy this into `.github/workflows/tuffgal-approve.yml`:
+Both paths use the same workflow. Copy this into
+`.github/workflows/tuffgal-approve.yml`:
 
 ```yaml
 name: tuffgal-approve
 
 on:
   issue_comment:
-    types: [created]
+    # `created` catches the @tuffgal approve mention; `edited` catches a ticked
+    # approve checkbox in the bot's sticky report comment.
+    types: [created, edited]
 
 jobs:
   approve:
     if: >-
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '@tuffgal approve')
+      github.event.issue.pull_request && (
+        contains(github.event.comment.body, '@tuffgal approve') ||
+        (github.event.action == 'edited' &&
+         contains(github.event.comment.body, 'tuffgal-approve-box') &&
+         contains(github.event.comment.body, '[x] <!-- tuffgal-approve-box'))
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: write # commit baselines to the PR head branch

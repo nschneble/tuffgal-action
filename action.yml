@@ -30,6 +30,21 @@ inputs:
     description: Node.js version for setup-node. Tuffgal requires Node 22+.
     required: false
     default: "22"
+  pages-preview:
+    description: >-
+      Publish the report + baselines to a per-PR GitHub Pages preview
+      (gh-pages branch, `pr-<n>/` subdir) so the PR comment can deep-link
+      straight to a changed story with its screenshots expanded — no artifact
+      download. Requires Pages enabled on the repo and `contents: write` on the
+      job. Degrades gracefully: if publish or URL resolution fails, the comment
+      falls back to the artifact-download links. PUBLIC repos only (private
+      Pages is Enterprise-only). Set to false to skip.
+    required: false
+    default: "true"
+  pages-branch:
+    description: Branch the per-PR preview is published to. Only used when pages-preview is true.
+    required: false
+    default: "gh-pages"
   report-path:
     description: Path to the report directory written by Tuffgal. Must match `paths.report` in tuffgal.config.ts. Relative to working-directory.
     required: false
@@ -77,6 +92,9 @@ outputs:
   passed:
     description: Number of stories that passed.
     value: ${{ steps.outcome.outputs.passed }}
+  preview-url:
+    description: "Base URL of the per-PR GitHub Pages preview (e.g. https://owner.github.io/repo/pr-41), or empty when pages-preview is off or publishing was skipped/failed. Append `/report/index.html` for the report."
+    value: ${{ steps.pages.outputs.preview-url }}
   total:
     description: Total number of stories executed.
     value: ${{ steps.outcome.outputs.total }}
@@ -253,11 +271,130 @@ runs:
         path: ${{ inputs.working-directory }}/${{ inputs.report-path }}/candidates/
         retention-days: ${{ inputs.retention-days }}
 
+    # Publish a per-PR Pages preview so the comment can link straight to the
+    # report + individual PNGs instead of a zip. The report references baselines
+    # as `../baselines/…`, so both trees are staged as siblings under `pr-<n>/`
+    # (report/ + baselines/) to keep those relative image srcs resolving exactly
+    # as they do locally. Best-effort: any failure (no contents:write, Pages
+    # off, private repo) logs a warning and leaves preview-url empty, and the
+    # comment falls back to artifact-download links. Never fails the job.
+    - name: Publish per-PR preview to GitHub Pages
+      id: pages
+      if: always() && github.event_name == 'pull_request' && inputs.pages-preview == 'true' && steps.outcome.outputs.pending == 'true'
+      uses: actions/github-script@v7
+      env:
+        TUFFGAL_REPORT_PATH: ${{ inputs.report-path }}
+        TUFFGAL_BASELINES_PATH: ${{ inputs.baselines-path }}
+        TUFFGAL_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        PAGES_BRANCH: ${{ inputs.pages-branch }}
+        GIT_USER_NAME: tuffgal[bot]
+        GIT_USER_EMAIL: tuffgal-bot@users.noreply.github.com
+        GITHUB_TOKEN: ${{ github.token }}
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const { execFileSync } = require('child_process');
+          const { owner, repo } = context.repo;
+          const prNumber = context.payload.pull_request.number;
+
+          const wd = process.env.TUFFGAL_WORKING_DIRECTORY || '.';
+          const reportAbs = path.resolve(wd, process.env.TUFFGAL_REPORT_PATH || 'tuffgal/report');
+          const baselinesAbs = path.resolve(wd, process.env.TUFFGAL_BASELINES_PATH || 'tuffgal/baselines');
+          const branch = process.env.PAGES_BRANCH || 'gh-pages';
+
+          const run = (cmd, args, opts) =>
+            execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts });
+          const token = process.env.GITHUB_TOKEN || process.env.INPUT_GITHUB_TOKEN;
+          const remote = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+          const work = path.join(process.env.RUNNER_TEMP, 'tuffgal-pages');
+
+          // 1. Publish this PR's subtree to the pages branch FIRST. The branch
+          //    must exist before Pages can be pointed at it — resolving/enabling
+          //    Pages before the push would deadlock a fresh repo (you cannot
+          //    select a source branch that does not exist yet). A push failure
+          //    (no contents:write) aborts with an empty preview-url, so the
+          //    comment falls back to artifact links.
+          try {
+            fs.rmSync(work, { recursive: true, force: true });
+            fs.mkdirSync(work, { recursive: true });
+            // Shallow-clone the existing preview branch, or start an orphan so
+            // the first-ever preview carries no unrelated repo history.
+            try {
+              run('git', ['clone', '--depth', '1', '--branch', branch, remote, work]);
+            } catch {
+              run('git', ['init', '-q', work]);
+              run('git', ['-C', work, 'remote', 'add', 'origin', remote]);
+              run('git', ['-C', work, 'checkout', '-q', '--orphan', branch]);
+            }
+            run('git', ['-C', work, 'config', 'user.name', process.env.GIT_USER_NAME]);
+            run('git', ['-C', work, 'config', 'user.email', process.env.GIT_USER_EMAIL]);
+
+            // Replace only THIS PR's subtree; other PRs' previews are untouched.
+            // report/ + baselines/ stage as siblings so the report's
+            // `../baselines/…` image srcs resolve on Pages as they do locally.
+            const prDir = path.join(work, `pr-${prNumber}`);
+            fs.rmSync(prDir, { recursive: true, force: true });
+            fs.mkdirSync(path.join(prDir, 'report'), { recursive: true });
+            fs.cpSync(reportAbs, path.join(prDir, 'report'), { recursive: true });
+            if (fs.existsSync(baselinesAbs)) {
+              fs.cpSync(baselinesAbs, path.join(prDir, 'baselines'), { recursive: true });
+            }
+
+            run('git', ['-C', work, 'add', '-A']);
+            // `git commit` exits non-zero when nothing changed; treat as a no-op.
+            try {
+              run('git', ['-C', work, 'commit', '-q', '-m', `tuffgal preview for PR #${prNumber}`]);
+            } catch (e) {
+              if (!/nothing to commit/.test(String((e && e.stdout) || '') + String((e && e.stderr) || ''))) throw e;
+            }
+            run('git', ['-C', work, 'push', '-q', 'origin', `HEAD:refs/heads/${branch}`]);
+          } catch (e) {
+            core.warning(`Could not push the per-PR Pages preview (need contents: write?): ${e.message}. The comment will fall back to artifact-download links.`);
+            core.setOutput('preview-url', '');
+            return;
+          }
+
+          // 2. Resolve the canonical Pages base URL (handles project vs user/org
+          //    pages and custom domains). If Pages is not yet enabled, try to
+          //    enable it against the branch we just pushed — needs `pages: write`.
+          //    Either failure leaves preview-url empty (branch is still pushed,
+          //    so enabling Pages manually later makes past previews resolve).
+          let baseUrl = '';
+          const readBase = async () => {
+            const pages = await github.rest.repos.getPages({ owner, repo });
+            return (pages.data.html_url || '').replace(/\/$/, '');
+          };
+          try {
+            baseUrl = await readBase();
+          } catch (e) {
+            try {
+              await github.rest.repos.createPagesSite({ owner, repo, source: { branch, path: '/' } });
+              core.info(`Enabled GitHub Pages for ${owner}/${repo} (source: ${branch}).`);
+              baseUrl = await readBase();
+            } catch (e2) {
+              core.warning(`GitHub Pages is not enabled and could not be enabled automatically (${e2.status || e2.message}); the branch was pushed. Enable Pages (source: the ${branch} branch, needs \`pages: write\`) to get deep-link previews. Falling back to artifact links.`);
+              core.setOutput('preview-url', '');
+              return;
+            }
+          }
+          if (!baseUrl) {
+            core.warning('Could not resolve the Pages base URL; falling back to artifact links.');
+            core.setOutput('preview-url', '');
+            return;
+          }
+
+          const previewUrl = `${baseUrl}/pr-${prNumber}`;
+          core.setOutput('preview-url', previewUrl);
+          core.info(`Published per-PR preview to ${previewUrl}/report/index.html (Pages may take a moment to build).`);
+
     - name: Post sticky PR comment
       if: always() && github.event_name == 'pull_request'
       uses: actions/github-script@v7
       env:
         TUFFGAL_REPORT_PATH: ${{ inputs.report-path }}
+        TUFFGAL_BASELINES_PATH: ${{ inputs.baselines-path }}
+        PREVIEW_URL: ${{ steps.pages.outputs.preview-url }}
         TUFFGAL_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         OUTCOME: ${{ steps.outcome.outputs.outcome }}
         PASSED: ${{ steps.outcome.outputs.passed }}
@@ -288,16 +425,55 @@ runs:
           };
           const envMismatch = process.env.ENV_MISMATCH === 'true';
 
-          // Story names are a best-effort convenience read from results.json; the
-          // counts above (from the parse step) are the authoritative source.
-          let changedNames = [], newNames = [], deletedNames = [], mismatchKeys = [];
+          // A published preview turns every image path + story into a real URL.
+          // Empty when pages-preview is off or publishing failed → the comment
+          // degrades to the plain name list + artifact-download flow below.
+          const previewUrl = (process.env.PREVIEW_URL || '').replace(/\/$/, '');
+          const baselinesPath = process.env.TUFFGAL_BASELINES_PATH || 'tuffgal/baselines';
+          const reportAbs = path.resolve(wd, reportPath);
+          const baselinesAbs = path.resolve(wd, baselinesPath);
+          // Map an absolute results.json image path to its preview URL. The
+          // preview stages report-path under `pr-<n>/report` and baselines-path
+          // under `pr-<n>/baselines`, so relativize against whichever root the
+          // path lives under. Returns null for a path under neither (or no
+          // preview), so callers just skip that image.
+          const toPreviewUrl = (abs) => {
+            if (!previewUrl || !abs) return null;
+            const r = path.resolve(abs);
+            const under = (root) => r === root || r.startsWith(root + path.sep);
+            if (under(reportAbs)) return `${previewUrl}/report/${path.relative(reportAbs, r).split(path.sep).join('/')}`;
+            if (under(baselinesAbs)) return `${previewUrl}/baselines/${path.relative(baselinesAbs, r).split(path.sep).join('/')}`;
+            return null;
+          };
+
+          // Story names + per-story image URLs are a best-effort convenience read
+          // from results.json; the counts above (from the parse step) are the
+          // authoritative source. `index` is the story's position in the stories
+          // array — the SAME ordinal template.ts renders as `id="story-<index>"`,
+          // so `#story-<index>` deep-links land on the right story.
+          let changed = [], neu = [], deletedNames = [], mismatchKeys = [];
           try {
             const r = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
-            for (const s of r.stories || []) {
-              const statuses = [s.status].concat((s.actions || []).map(a => a.status));
-              if (statuses.includes('new')) newNames.push(s.story);
-              else if (statuses.includes('changed')) changedNames.push(s.story);
-            }
+            (r.stories || []).forEach((s, index) => {
+              const actions = s.actions || [];
+              const statuses = [s.status].concat(actions.map(a => a.status));
+              // One representative shot per story for the inline preview: the
+              // first action that actually drifted (or the story's first action).
+              const shotFrom = (want) => actions.find(a => a.status === want) || actions[0] || {};
+              const name = String(s.story || s.file || `story ${index}`).replace(/[\r\n]+/g, ' ');
+              if (statuses.includes('new')) {
+                const a = shotFrom('new');
+                neu.push({ index, name, actual: toPreviewUrl(a.actualPath) });
+              } else if (statuses.includes('changed')) {
+                const a = shotFrom('changed');
+                changed.push({
+                  index, name,
+                  baseline: toPreviewUrl(a.baselinePath),
+                  actual: toPreviewUrl(a.actualPath),
+                  diff: toPreviewUrl(a.diffPath),
+                });
+              }
+            });
             deletedNames = (r.deleted || []).map(d =>
               typeof d === 'string' ? d : (d.action || d.story || d.path || JSON.stringify(d)));
             mismatchKeys = (r.environment && r.environment.mismatchKeys) || [];
@@ -307,6 +483,8 @@ runs:
 
           const { owner, repo } = context.repo;
           const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+          const reportUrl = previewUrl ? `${previewUrl}/report/index.html` : null;
+          const storyLink = (e) => reportUrl ? `${reportUrl}#story-${e.index}` : null;
           const pending = (Number(counts.new) || 0) + (Number(counts.changed) || 0) + (Number(counts.deleted) || 0) > 0;
 
           const lines = [];
@@ -333,25 +511,87 @@ runs:
           lines.push(`| Total | ${counts.total} |`);
           lines.push('');
 
-          const nameSection = (title, names) => {
-            if (!names.length) return;
-            lines.push(`**${title}**`);
-            for (const n of names) lines.push(`- ${String(n).replace(/[\r\n]+/g, ' ')}`);
+          // Escape a story name for use inside an HTML <summary>.
+          const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          const thumb = (url, label) =>
+            url ? `<img src="${url}" alt="${esc(label)}" width="260">` : `<em>${esc(label)} unavailable</em>`;
+
+          // Changed: with a preview, each story is a collapsible carrying inline
+          // baseline / actual / diff thumbnails plus a deep-link that opens the
+          // report scrolled to that story with its screenshots expanded. Without
+          // a preview, fall back to a plain name list.
+          const changedSection = () => {
+            if (!changed.length) return;
+            lines.push(`**Changed (${changed.length})**`);
+            lines.push('');
+            for (const e of changed) {
+              if (previewUrl) {
+                lines.push('<details>');
+                lines.push(`<summary>${esc(e.name)}</summary>`);
+                lines.push('');
+                lines.push('| Baseline | Actual | Diff |');
+                lines.push('|---|---|---|');
+                lines.push(`| ${thumb(e.baseline, 'baseline')} | ${thumb(e.actual, 'actual')} | ${thumb(e.diff, 'diff')} |`);
+                lines.push('');
+                lines.push(`[Open in report →](${storyLink(e)})`);
+                lines.push('</details>');
+              } else {
+                lines.push(`- ${e.name}`);
+              }
+            }
             lines.push('');
           };
-          nameSection('Changed', changedNames);
-          nameSection('New', newNames);
-          nameSection('Deleted', deletedNames);
+
+          // New: no prior baseline to compare, so show the proposed one (the
+          // run's actual = the candidate) inline.
+          const newSection = () => {
+            if (!neu.length) return;
+            lines.push(`**New (${neu.length})**`);
+            lines.push('');
+            for (const e of neu) {
+              if (previewUrl) {
+                lines.push('<details>');
+                lines.push(`<summary>${esc(e.name)}</summary>`);
+                lines.push('');
+                lines.push(`Proposed new baseline: ${thumb(e.actual, 'proposed baseline')}`);
+                lines.push('');
+                lines.push(`[Open in report →](${storyLink(e)})`);
+                lines.push('</details>');
+              } else {
+                lines.push(`- ${e.name}`);
+              }
+            }
+            lines.push('');
+          };
+
+          changedSection();
+          newSection();
+          if (deletedNames.length) {
+            lines.push(`**Deleted (${deletedNames.length})**`);
+            for (const n of deletedNames) lines.push(`- ${String(n).replace(/[\r\n]+/g, ' ')}`);
+            lines.push('');
+          }
 
           if (pending) {
             lines.push('### Approve these changes');
             lines.push('');
-            lines.push(`[Open the run and download the **tuffgal-candidates** + **tuffgal-report** artifacts →](${runUrl})`);
+            if (reportUrl) {
+              lines.push(`📊 [Open the full report](${reportUrl}) — scrolls to each changed story with screenshots expanded.`);
+              lines.push('');
+            }
+            // Primary one-click path: tick the box. The approve workflow (see
+            // examples/tuffgal-approve.yml) fires on the `edited` event, verifies
+            // the ticker has write access, and promotes the candidate baselines.
+            // The literal `<!-- tuffgal-approve-box -->` marker is what that
+            // workflow greps for, so the checkbox can never be confused with an
+            // unrelated task list a reviewer adds elsewhere.
+            lines.push('- [ ] <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit the candidate baselines to this PR (requires write access).');
             lines.push('');
-            lines.push('Either:');
+            lines.push('…or comment `@tuffgal approve`. Prefer a local checkout? Download the `tuffgal-candidates` artifact from the run and run `npx tuffgal approve --from <extracted-dir> --prune`, then commit the updated baselines directory.');
             lines.push('');
-            lines.push('- Comment `@tuffgal approve` on this PR (requires write access), or');
-            lines.push('- Download the `tuffgal-candidates` artifact and run `npx tuffgal approve --from <extracted-dir> --prune`, then commit the updated baselines directory.');
+            lines.push(`[View the run →](${runUrl})`);
+          } else if (reportUrl) {
+            lines.push(`[Open the report →](${reportUrl}) · [View the run →](${runUrl})`);
           } else {
             lines.push(`[View the run →](${runUrl})`);
           }

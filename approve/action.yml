@@ -63,11 +63,38 @@ runs:
           const issue = context.payload.issue;
 
           // Defense in depth: re-validate the trigger even though the calling
-          // workflow already filtered. `\b@tuffgal approve\b` on a boundary,
-          // case-insensitive; the body never reaches a shell.
+          // workflow already filtered. The body never reaches a shell.
+          //
+          // TWO trigger shapes resolve to the same approve, differing only in WHO
+          // the approver is:
+          //   - mention: a human comments `@tuffgal approve` → approver is the
+          //     comment AUTHOR (`comment.user.login`).
+          //   - checkbox: a human TICKS the approve box in the bot's sticky
+          //     report comment (`issue_comment: edited`). The comment author is
+          //     the bot, so the approver is the EDITOR — `context.actor`. We
+          //     recognize it by the report + approve-box markers with the box
+          //     CHECKED (`[x]`), and ignore the bot's own edits (e.g. the visual
+          //     workflow refreshing the sticky comment with an UNchecked box) so
+          //     a comment update never loops back into an approval.
           const body = String(comment && comment.body || '');
-          if (!issue || !issue.pull_request || !/(^|\s)@tuffgal\s+approve(\s|$)/i.test(body)) {
-            core.info('Comment is not a @tuffgal approve on a PR; nothing to do.');
+          const isMention = /(^|\s)@tuffgal\s+approve(\s|$)/i.test(body);
+          const isCheckedBox =
+            context.eventName === 'issue_comment' &&
+            context.payload.action === 'edited' &&
+            /<!--\s*tuffgal-report\s*-->/.test(body) &&
+            /-\s*\[[xX]\]\s*<!--\s*tuffgal-approve-box\s*-->/.test(body);
+          const actor = isMention ? (comment && comment.user && comment.user.login) : context.actor;
+
+          if (!issue || !issue.pull_request || (!isMention && !isCheckedBox)) {
+            core.info('Comment is not a @tuffgal approve or a ticked approve box on a PR; nothing to do.');
+            core.setOutput('proceed', 'false');
+            return;
+          }
+          // A bot-authored edit of the sticky comment fires `edited` too (e.g. the
+          // visual workflow refreshing it) — never treat that as an approval, and
+          // never react on it.
+          if (!actor || /\[bot\]$/.test(actor)) {
+            core.info(`Ignoring edit by '${actor}'.`);
             core.setOutput('proceed', 'false');
             return;
           }
@@ -80,10 +107,9 @@ runs:
             } catch (e) { core.info(`Could not add reaction: ${e.message}`); }
           };
 
-          // Verify the commenter's repository permission BEFORE any download or
+          // Verify the approver's repository permission BEFORE any download or
           // write. Require admin / maintain / write. Fail closed on anything else
           // (including API errors).
-          const actor = comment.user.login;
           let level = 'none';
           try {
             const perm = await github.rest.repos.getCollaboratorPermissionLevel({
