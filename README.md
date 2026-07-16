@@ -29,7 +29,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write # push the per-PR Pages preview to gh-pages (drop to `read` if pages-preview is off)
+  contents: write # push the per-PR Pages preview to gh-pages
   pull-requests: write # required for the sticky PR comment
 
 jobs:
@@ -102,23 +102,23 @@ contract the CI-owned-baselines model asks of a consumer.
 
 ## Inputs
 
-| Name                | Default             | Description                                                                                                                                                                                                       |
-| ------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baselines-path`    | `tuffgal/baselines` | Path to the baselines directory, relative to `working-directory` (must match `paths.baselines`)                                                                                                                   |
-| `coverage`          | `false`             | Run with `--coverage` to emit a monocart V8 coverage report                                                                                                                                                       |
-| `fail-on-changed`   | `true`              | Fail the job when stories have pending visual changes (`new`, `changed`, or `deleted`) awaiting review. Set `false` to surface changes via artifact + comment without blocking the job                            |
-| `headed`            | `false`             | Run with `--headed` (rarely useful in CI)                                                                                                                                                                         |
-| `install-browsers`  | `true`              | Run `npx playwright install --with-deps chromium` before the harness                                                                                                                                              |
-| `node-version`      | `22`                | Node.js version (Tuffgal requires Node 22+)                                                                                                                                                                       |
-| `pages-preview`     | `true`              | Publish the report + baselines to a per-PR GitHub Pages preview so the comment can deep-link to changed stories. Needs `contents: write` + Pages enabled; PUBLIC repos only; degrades to artifact links otherwise |
-| `pages-branch`      | `gh-pages`          | Branch the per-PR preview is published to (only used when `pages-preview` is on)                                                                                                                                  |
-| `pages-token`       | `${{ github.token }}` | Token to push the preview branch and auto-enable Pages. The default `GITHUB_TOKEN` pushes but can't create the Pages site (enable Pages once by hand); pass an admin PAT / App token to auto-enable it          |
-| `report-path`       | `tuffgal/report`    | Path to the report directory, relative to `working-directory` (must match `paths.report` in `tuffgal.config.ts`)                                                                                                  |
-| `retention-days`    | `14`                | Artifact retention                                                                                                                                                                                                |
-| `setup-script`      | `''`                | Optional npm script to run before the harness (e.g. DB bootstrap)                                                                                                                                                 |
-| `story`             | `''`                | Filter to a single story (`--story <name>`)                                                                                                                                                                       |
-| `upload-artifacts`  | `true`              | Upload the report + candidate baselines as workflow artifacts when visual changes await review                                                                                                                    |
-| `working-directory` | `.`                 | Directory containing `tuffgal.config.ts` and `package.json`                                                                                                                                                       |
+| Name                | Default               | Description                                                                                                                                                                                                       |
+| ------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baselines-path`    | `tuffgal/baselines`   | Path to the baselines directory, relative to `working-directory` (must match `paths.baselines`)                                                                                                                   |
+| `coverage`          | `false`               | Run with `--coverage` to emit a monocart V8 coverage report                                                                                                                                                       |
+| `fail-on-changed`   | `true`                | Fail the job when stories have pending visual changes (`new`, `changed`, or `deleted`) awaiting review. Set `false` to surface changes via artifact + comment without blocking the job                            |
+| `headed`            | `false`               | Run with `--headed` (rarely useful in CI)                                                                                                                                                                         |
+| `install-browsers`  | `true`                | Run `npx playwright install --with-deps chromium` before the harness                                                                                                                                              |
+| `node-version`      | `22`                  | Node.js version (Tuffgal requires Node 22+)                                                                                                                                                                       |
+| `pages-preview`     | `true`                | Publish the report + baselines to a per-PR GitHub Pages preview so the comment can deep-link to changed stories. Needs `contents: write` + Pages enabled; PUBLIC repos only; degrades to artifact links otherwise |
+| `pages-branch`      | `gh-pages`            | Branch the per-PR preview is published to (only used when `pages-preview` is on)                                                                                                                                  |
+| `pages-token`       | `${{ github.token }}` | Token to push the preview branch and auto-enable Pages. The default `GITHUB_TOKEN` pushes but can't create the Pages site (enable Pages once by hand); pass an admin PAT / App token to auto-enable it            |
+| `report-path`       | `tuffgal/report`      | Path to the report directory, relative to `working-directory` (must match `paths.report` in `tuffgal.config.ts`)                                                                                                  |
+| `retention-days`    | `14`                  | Artifact retention                                                                                                                                                                                                |
+| `setup-script`      | `''`                  | Optional npm script to run before the harness (e.g. DB bootstrap)                                                                                                                                                 |
+| `story`             | `''`                  | Filter to a single story (`--story <name>`)                                                                                                                                                                       |
+| `upload-artifacts`  | `true`                | Upload the report + candidate baselines as workflow artifacts when visual changes await review                                                                                                                    |
+| `working-directory` | `.`                   | Directory containing `tuffgal.config.ts` and `package.json`                                                                                                                                                       |
 
 ## Outputs
 

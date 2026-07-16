@@ -6,6 +6,8 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+## [v1.2.1] - 2026-07-16
+
 ### Added
 
 - `pages-token` input to auto-enable the per-PR Pages preview
@@ -149,7 +151,8 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.2.1...HEAD
+[v1.2.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.2.1
 [v1.2.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.2.0
 [v1.1.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.1.0
 [v1.0.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.0.1
