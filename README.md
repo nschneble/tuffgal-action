@@ -29,8 +29,8 @@ on:
     branches: [main]
 
 permissions:
-  contents: write # push the per-PR Pages preview (drop to `read` if pages-preview is off)
-  pages: write # let the preview auto-enable Pages on first run (optional — enable Pages by hand instead)
+  contents: write # push the per-PR Pages preview
+  pages: write # let the preview auto-enable Pages on first run
   pull-requests: write # required for the sticky PR comment
 
 jobs:
@@ -72,62 +72,57 @@ For a static-site project that doesn't need a database, you can drop the
 
 ### Per-PR preview (deep-linkable report)
 
-When `pages-preview` is on (the default), a run with pending changes publishes
-the report **and** baselines to a per-PR GitHub Pages preview
-(`gh-pages` branch, `pr-<n>/` subdir). The sticky comment then carries, for each
-changed story, inline **baseline / actual / diff** thumbnails and an **Open in
-report →** link that jumps straight to that story with its screenshots
-expanded — no artifact zip to download, unzip, and open.
+When `pages-preview` is on, a run with pending changes publishes the report
+and baselines to a per-PR GitHub Pages preview. The sticky comment then
+carries, for each changed story, inline baseline / actual / diff thumbnails
+and an open-in-report link that jumps straight to that story with its
+screenshots expanded.
 
 It needs two things on the consumer repo:
 
-- **`contents: write`** on the job (shown above) so the preview can push to
-  `gh-pages`.
-- **GitHub Pages enabled**, source = the `gh-pages` branch. PUBLIC repos only —
-  Pages for private repos is GitHub Enterprise-only. Grant **`pages: write`**
-  and the first run enables Pages for you (against the branch it just pushed);
-  otherwise enable it by hand once and every past/future preview resolves.
+- **`contents: write`** on the job so the preview can push to `gh-pages`
+- **GitHub Pages enabled** for public repos. Grant `pages: write` and the
+  first run enables Pages for you
 
-The preview is **best-effort**: if Pages is off, the repo is private, or the
+The preview is best-effort. If Pages is off, the repo is private, or the
 push is blocked, the step logs a warning and the comment falls back to the
-artifact-download links. Set `pages-preview: false` to skip it entirely (then
-`contents: read` is enough).
+artifact-download links. Set `pages-preview: false` to skip it entirely.
 
-Your app must boot and seed deterministically in CI — that's the one contract
-the CI-owned-baselines model asks of a consumer.
+Your app must boot and seed deterministically in CI. That's the one
+contract the CI-owned-baselines model asks of a consumer.
 
 ## Inputs
 
-| Name                | Default             | Description                                                                                                                                                                            |
-| ------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `baselines-path`    | `tuffgal/baselines` | Path to the baselines directory, relative to `working-directory` (must match `paths.baselines`)                                                                                        |
-| `coverage`          | `false`             | Run with `--coverage` to emit a monocart V8 coverage report                                                                                                                            |
-| `fail-on-changed`   | `true`              | Fail the job when stories have pending visual changes (`new`, `changed`, or `deleted`) awaiting review. Set `false` to surface changes via artifact + comment without blocking the job |
-| `headed`            | `false`             | Run with `--headed` (rarely useful in CI)                                                                                                                                              |
-| `install-browsers`  | `true`              | Run `npx playwright install --with-deps chromium` before the harness                                                                                                                   |
-| `node-version`      | `22`                | Node.js version (Tuffgal requires Node 22+)                                                                                                                                            |
+| Name                | Default             | Description                                                                                                                                                                                                       |
+| ------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baselines-path`    | `tuffgal/baselines` | Path to the baselines directory, relative to `working-directory` (must match `paths.baselines`)                                                                                                                   |
+| `coverage`          | `false`             | Run with `--coverage` to emit a monocart V8 coverage report                                                                                                                                                       |
+| `fail-on-changed`   | `true`              | Fail the job when stories have pending visual changes (`new`, `changed`, or `deleted`) awaiting review. Set `false` to surface changes via artifact + comment without blocking the job                            |
+| `headed`            | `false`             | Run with `--headed` (rarely useful in CI)                                                                                                                                                                         |
+| `install-browsers`  | `true`              | Run `npx playwright install --with-deps chromium` before the harness                                                                                                                                              |
+| `node-version`      | `22`                | Node.js version (Tuffgal requires Node 22+)                                                                                                                                                                       |
 | `pages-preview`     | `true`              | Publish the report + baselines to a per-PR GitHub Pages preview so the comment can deep-link to changed stories. Needs `contents: write` + Pages enabled; PUBLIC repos only; degrades to artifact links otherwise |
-| `pages-branch`      | `gh-pages`          | Branch the per-PR preview is published to (only used when `pages-preview` is on)                                                                                                       |
-| `report-path`       | `tuffgal/report`    | Path to the report directory, relative to `working-directory` (must match `paths.report` in `tuffgal.config.ts`)                                                                       |
-| `retention-days`    | `14`                | Artifact retention                                                                                                                                                                     |
-| `setup-script`      | `''`                | Optional npm script to run before the harness (e.g. DB bootstrap)                                                                                                                      |
-| `story`             | `''`                | Filter to a single story (`--story <name>`)                                                                                                                                            |
-| `upload-artifacts`  | `true`              | Upload the report + candidate baselines as workflow artifacts when visual changes await review                                                                                         |
-| `working-directory` | `.`                 | Directory containing `tuffgal.config.ts` and `package.json`                                                                                                                            |
+| `pages-branch`      | `gh-pages`          | Branch the per-PR preview is published to (only used when `pages-preview` is on)                                                                                                                                  |
+| `report-path`       | `tuffgal/report`    | Path to the report directory, relative to `working-directory` (must match `paths.report` in `tuffgal.config.ts`)                                                                                                  |
+| `retention-days`    | `14`                | Artifact retention                                                                                                                                                                                                |
+| `setup-script`      | `''`                | Optional npm script to run before the harness (e.g. DB bootstrap)                                                                                                                                                 |
+| `story`             | `''`                | Filter to a single story (`--story <name>`)                                                                                                                                                                       |
+| `upload-artifacts`  | `true`              | Upload the report + candidate baselines as workflow artifacts when visual changes await review                                                                                                                    |
+| `working-directory` | `.`                 | Directory containing `tuffgal.config.ts` and `package.json`                                                                                                                                                       |
 
 ## Outputs
 
-| Name           | Description                                                                                                                 |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `changed`      | Number of stories whose committed baseline changed (pixels or a11y snapshot)                                                |
-| `deleted`      | Number of orphaned baseline entries with no matching story (pruned on approve)                                              |
-| `env-mismatch` | `'true'` when the capture environment in `baselines/manifest.json` no longer matches this CI run (expect a full re-approve) |
-| `failed`       | Number of stories that failed                                                                                               |
-| `new`          | Number of stories with no committed baseline yet (candidate written)                                                        |
-| `outcome`      | One of `pass`, `changed` (pending new/changed/deleted review), `env-mismatch`, `failed`, or `no-results`                    |
-| `passed`       | Number of stories that passed                                                                                               |
+| Name           | Description                                                                                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `changed`      | Number of stories whose committed baseline changed (pixels or a11y snapshot)                                                                                                   |
+| `deleted`      | Number of orphaned baseline entries with no matching story (pruned on approve)                                                                                                 |
+| `env-mismatch` | `'true'` when the capture environment in `baselines/manifest.json` no longer matches this CI run (expect a full re-approve)                                                    |
+| `failed`       | Number of stories that failed                                                                                                                                                  |
+| `new`          | Number of stories with no committed baseline yet (candidate written)                                                                                                           |
+| `outcome`      | One of `pass`, `changed` (pending new/changed/deleted review), `env-mismatch`, `failed`, or `no-results`                                                                       |
+| `passed`       | Number of stories that passed                                                                                                                                                  |
 | `preview-url`  | Base URL of the per-PR Pages preview (e.g. `https://owner.github.io/repo/pr-41`), or empty when the preview was off/skipped/failed. Append `/report/index.html` for the report |
-| `total`        | Total stories executed                                                                                                      |
+| `total`        | Total stories executed                                                                                                                                                         |
 
 `outcome` follows Tuffgal's exit-code precedence: `failed` (broken stories) >
 `env-mismatch` (capture environment changed) > `changed` (pending visual

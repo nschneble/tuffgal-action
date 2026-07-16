@@ -6,21 +6,16 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+_Nothing just yet_
+
+## [v1.2.0] - 2026-07-16
+
 ### Added
 
-- Per-PR GitHub Pages preview so the sticky comment deep-links instead of pointing at a zip
-  - New `pages-preview` (default `true`) + `pages-branch` (default `gh-pages`) inputs and a `preview-url` output
-  - Publishes `<report-path>/` + `<baselines-path>/` to `gh-pages` under `pr-<n>/` on a PR with pending changes (needs `contents: write` + Pages enabled; PUBLIC repos only)
-  - Each changed story in the comment now carries inline baseline/actual/diff thumbnails and an **Open in report →** link that jumps to that story with its screenshots expanded
-  - Best-effort: if Pages is off, the repo is private, or the push is blocked, the comment falls back to the artifact-download links
-- Approve by ticking a checkbox in the sticky comment
-  - The `approve` sub-action now also fires on a ticked **Approve these baselines** box (the `issue_comment: edited` event), promoting candidates exactly like `@tuffgal approve`
-  - Recognized only in the bot's own report comment (hidden `tuffgal-approve-box` marker), keyed off the person who ticked it; the bot's own comment refreshes never loop back into an approval
-
-### Changed
-
-- Consumer usage example now requests `contents: write` (drop to `read` when `pages-preview: false`)
-- `tuffgal-approve.yml` example listens on `issue_comment: [created, edited]` to catch the checkbox
+- Dynamic per-PR previews
+- PRs with pending story changes get a published report
+- Stories can be deep-linked (courtesy Tuffgal 0.2.0-alpha.3)
+- Checkbox approval to compliment the @tuffgal approve comment
 
 ## [v1.1.0] - 2026-07-11
 
@@ -146,7 +141,8 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.2.0...HEAD
+[v1.2.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.2.0
 [v1.1.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.1.0
 [v1.0.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.0.1
 [v1.0.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.0.0
