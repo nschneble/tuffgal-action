@@ -95,8 +95,9 @@ It needs two things on the consumer repo:
 > token via the **`pages-token`** input — then the first run enables Pages
 > itself. (`pages: write` alone does **not** grant site creation.)
 
-The preview is best-effort. If Pages is off, the repo is private, or the
-push is blocked, the step logs a warning and the comment falls back to the
+The preview is best-effort. Expected not-configured states — Pages off, the
+repo is private, or the push is blocked — log a notice; only unexpected git/API
+failures log a warning. Either way the comment falls back to the
 artifact-download links. Set `pages-preview: false` to skip it entirely.
 
 Your app must boot and seed deterministically in CI. That's the one
@@ -260,8 +261,9 @@ by hand.
   gets an immediate acknowledgement so a mid-run failure is distinguishable
   from an unresponsive trigger, then "🚀" once the baselines land.
 - It writes **only** files from the candidates artifact, path-scoped to the
-  baselines directory. Absolute paths, path traversal, or unexpected file
-  types in the artifact fail the job closed.
+  baselines directory. Absolute paths, path traversal, backslash paths,
+  symlink entries, or unexpected file types in the artifact fail the job
+  closed.
 - It reads the PR head's existing baselines as data, but **refuses any symlink
   among them fail-closed** — a write collaborator could otherwise commit
   `baselines/x.png -> ../../.npmrc` (or `/proc/self/environ`), and following it
