@@ -10,12 +10,16 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 - `approve` commit-step logic extracted into a unit-tested `baseline-tree.js` module
 - `approve` gate resolver and candidate selection extracted into unit-tested `resolve-approver.js` and `select-candidate.js` modules
+- sticky PR-comment body building extracted into a unit-tested `build-comment.js` module
 - the `Run Tuffgal` harness step now runs under `set -euo pipefail`, like every other bash block
 - CI now exercises the `failed` / `no-results` exit-code legs and the artifact validator's backslash-path rejection
 
 ### Fixed
 
 - `approve` no longer wipes unchanged baselines when `working-directory` is a subdirectory
+- PR-comment thumbnails now name their story in the alt text, giving screen-reader users per-image context
+- `no-results` and `failed` PR comments now name the concrete next step instead of dropping to a bare run link
+- PR-comment image `src` URLs are now attribute-escaped, matching the alt text
 - `approve` preflight points at the real `>= 0.2.0-alpha.1` requirement, not a nonexistent "v2"
 - Malformed `results.json` now reports `no-results` instead of crashing the parse step
 - Per-PR Pages preview survives overlapping visual runs (the push retries instead of dropping to artifact links)

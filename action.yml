@@ -192,7 +192,7 @@ runs:
           {
             echo "## Tuffgal"
             echo ""
-            echo "Harness produced no \`results.json\`. Treating as failed."
+            echo "The run wrote no \`results.json\` — check the Run Tuffgal step log and confirm \`report-path\` matches \`paths.report\` in tuffgal.config.ts. Treating as failed."
           } >> "$GITHUB_STEP_SUMMARY"
         }
 
@@ -250,7 +250,7 @@ runs:
           echo "Outcome: **$outcome**"
           if [ "$env_mismatch" = "true" ]; then
             echo ""
-            echo "> ⚠️ Capture environment changed — expect a full re-approve of baselines."
+            echo "> ⚠️ **Capture environment changed** — the committed baselines were captured in a different environment than this CI run. Comparison still ran, but expect a full re-approve."
           fi
           echo ""
           echo "| Status | Count |"
@@ -261,6 +261,10 @@ runs:
           echo "| Deleted | $deleted |"
           echo "| Failed | $failed |"
           echo "| Total | $total |"
+          if [ "$failed" -gt 0 ]; then
+            echo ""
+            echo "Download the \`tuffgal-report\` artifact and open \`index.html\` for story-by-story diffs and traces."
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Assemble candidates artifact
@@ -478,6 +482,10 @@ runs:
       if: always() && github.event_name == 'pull_request'
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
       env:
+        # Pass the COMPOSITE's action path through the step env: inside this
+        # nested github-script step GITHUB_ACTION_PATH points at github-script's
+        # own dir, not ours, so the module require below reads ACTION_PATH.
+        ACTION_PATH: ${{ github.action_path }}
         TUFFGAL_REPORT_PATH: ${{ inputs.report-path }}
         TUFFGAL_BASELINES_PATH: ${{ inputs.baselines-path }}
         PREVIEW_URL: ${{ steps.pages.outputs.preview-url }}
@@ -494,7 +502,9 @@ runs:
         script: |
           const fs = require('fs');
           const path = require('path');
-          const marker = '<!-- tuffgal-report -->';
+          // Nested github-script step: require via the composite's ACTION_PATH
+          // (passed through this step's env above), never bare GITHUB_ACTION_PATH.
+          const { MARKER, buildCommentBody } = require(`${process.env.ACTION_PATH}/scripts/build-comment.js`);
 
           const wd = process.env.TUFFGAL_WORKING_DIRECTORY || '.';
           const reportPath = process.env.TUFFGAL_REPORT_PATH || 'tuffgal/report';
@@ -569,120 +579,14 @@ runs:
 
           const { owner, repo } = context.repo;
           const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
-          const reportUrl = previewUrl ? `${previewUrl}/report/index.html` : null;
-          const storyLink = (e) => reportUrl ? `${reportUrl}#story-${e.index}` : null;
-          const pending = (Number(counts.new) || 0) + (Number(counts.changed) || 0) + (Number(counts.deleted) || 0) > 0;
 
-          const lines = [];
-          lines.push(marker);
-          lines.push('## 👁️ Tuffgal visual regression');
-          lines.push('');
-          lines.push(`Outcome: **${outcome}**`);
-          lines.push('');
-          if (envMismatch) {
-            lines.push('> ⚠️ **Capture environment changed** — the committed baselines were captured in a different environment than this CI run. Comparison still ran, but expect a full re-approve.');
-            if (mismatchKeys.length) {
-              lines.push('>');
-              lines.push('> Changed keys: ' + mismatchKeys.map(k => '`' + k + '`').join(', '));
-            }
-            lines.push('');
-          }
-          lines.push('| Status | Count |');
-          lines.push('|--------|-------|');
-          lines.push(`| Pass | ${counts.passed} |`);
-          lines.push(`| Changed | ${counts.changed} |`);
-          lines.push(`| New | ${counts.new} |`);
-          lines.push(`| Deleted | ${counts.deleted} |`);
-          lines.push(`| Failed | ${counts.failed} |`);
-          lines.push(`| Total | ${counts.total} |`);
-          lines.push('');
-
-          // Escape a story name for use inside an HTML <summary>.
-          const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          const thumb = (url, label) =>
-            url ? `<img src="${url}" alt="${esc(label)}" width="260">` : `<em>${esc(label)} unavailable</em>`;
-
-          // Changed: with a preview, each story is a collapsible carrying inline
-          // baseline / actual / diff thumbnails plus a deep-link that opens the
-          // report scrolled to that story with its screenshots expanded. Without
-          // a preview, fall back to a plain name list.
-          const changedSection = () => {
-            if (!changed.length) return;
-            lines.push(`**Changed (${changed.length})**`);
-            lines.push('');
-            for (const e of changed) {
-              if (previewUrl) {
-                lines.push('<details>');
-                lines.push(`<summary>${esc(e.name)}</summary>`);
-                lines.push('');
-                lines.push('| Baseline | Actual | Diff |');
-                lines.push('|---|---|---|');
-                lines.push(`| ${thumb(e.baseline, 'baseline')} | ${thumb(e.actual, 'actual')} | ${thumb(e.diff, 'diff')} |`);
-                lines.push('');
-                lines.push(`[Open in report →](${storyLink(e)})`);
-                lines.push('</details>');
-              } else {
-                lines.push(`- ${e.name}`);
-              }
-            }
-            lines.push('');
-          };
-
-          // New: no prior baseline to compare, so show the proposed one (the
-          // run's actual = the candidate) inline.
-          const newSection = () => {
-            if (!neu.length) return;
-            lines.push(`**New (${neu.length})**`);
-            lines.push('');
-            for (const e of neu) {
-              if (previewUrl) {
-                lines.push('<details>');
-                lines.push(`<summary>${esc(e.name)}</summary>`);
-                lines.push('');
-                lines.push(`Proposed new baseline: ${thumb(e.actual, 'proposed baseline')}`);
-                lines.push('');
-                lines.push(`[Open in report →](${storyLink(e)})`);
-                lines.push('</details>');
-              } else {
-                lines.push(`- ${e.name}`);
-              }
-            }
-            lines.push('');
-          };
-
-          changedSection();
-          newSection();
-          if (deletedNames.length) {
-            lines.push(`**Deleted (${deletedNames.length})**`);
-            for (const n of deletedNames) lines.push(`- ${String(n).replace(/[\r\n]+/g, ' ')}`);
-            lines.push('');
-          }
-
-          if (pending) {
-            lines.push('### Approve these changes');
-            lines.push('');
-            if (reportUrl) {
-              lines.push(`📊 [Open the full report](${reportUrl}) — scrolls to each changed story with screenshots expanded.`);
-              lines.push('');
-            }
-            // Primary one-click path: tick the box. The approve workflow (see
-            // examples/tuffgal-approve.yml) fires on the `edited` event, verifies
-            // the ticker has write access, and promotes the candidate baselines.
-            // The literal `<!-- tuffgal-approve-box -->` marker is what that
-            // workflow greps for, so the checkbox can never be confused with an
-            // unrelated task list a reviewer adds elsewhere.
-            lines.push('- [ ] <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit the candidate baselines to this PR (requires write access).');
-            lines.push('');
-            lines.push('…or comment `@tuffgal approve`. Prefer a local checkout? Download the `tuffgal-candidates` artifact from the run and run `npx tuffgal approve --from <extracted-dir> --prune`, then commit the updated baselines directory.');
-            lines.push('');
-            lines.push(`[View the run →](${runUrl})`);
-          } else if (reportUrl) {
-            lines.push(`[Open the report →](${reportUrl}) · [View the run →](${runUrl})`);
-          } else {
-            lines.push(`[View the run →](${runUrl})`);
-          }
-
-          const body = lines.join('\n');
+          // The pure body build — sections, thumbnails, env-mismatch banner,
+          // totals table, approve CTA, and outcome fallbacks all live in the
+          // module so the branch matrix is unit-tested.
+          const body = buildCommentBody({
+            outcome, counts, envMismatch, mismatchKeys, previewUrl,
+            changed, neu, deletedNames, runUrl,
+          });
           const issue_number = context.payload.pull_request.number;
 
           // Posting the comment must never fail the job — a missing
@@ -692,7 +596,7 @@ runs:
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number, per_page: 100,
             });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
+            const existing = comments.find(c => c.body && c.body.includes(MARKER));
             if (existing) {
               await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
             } else {

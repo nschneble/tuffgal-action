@@ -164,13 +164,13 @@ jobs:
             fi
           done
 
-  # Unit test for the Pages-preview push-retry decision — the pure
-  # retryable-vs-terminal classification extracted into scripts/pages-push.js.
-  # The concurrent-PR push race can't be exercised in CI (it needs two
-  # overlapping live PRs), so the git side effects are proven only by review;
-  # this locks the one part with a right answer — that a non-fast-forward
-  # rejection retries while a permission failure falls straight to fallback.
-  pages-push-retry-unit:
+  # Unit tests for the root scripts/ modules' PURE logic — the Pages-preview
+  # push-retry decision (pages-push.js), whose concurrent-PR race can't be
+  # exercised in CI, and the sticky-comment body builder (build-comment.js),
+  # whose github-script step can't run without a live PR. The scripts/*.test.js
+  # glob runs both; the git and GitHub-API side effects stay proven by review
+  # while the parts with a right answer are locked here.
+  scripts-unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -179,7 +179,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
-      - name: Run pages-push retry-decision unit tests
+      - name: Run scripts unit tests
         shell: bash
         run: node --test scripts/*.test.js
 
@@ -216,6 +216,43 @@ jobs:
           # github-script step) must NOT reappear.
           # shellcheck disable=SC2016
           if grep -Fq 'process.env.GITHUB_ACTION_PATH}/scripts/pages-push.js' action.yml; then
+            echo "action.yml reintroduced the GITHUB_ACTION_PATH require, which resolves to github-script's own dir inside the nested step." >&2
+            exit 1
+          fi
+
+  # Source lock for the module require inside the nested github-script sticky
+  # PR-comment step. `github.action_path` is only supported in composite actions;
+  # inside a nested github-script step `GITHUB_ACTION_PATH` points at
+  # github-script's OWN action dir, not this composite's — so requiring the
+  # module via `GITHUB_ACTION_PATH` resolves to a nonexistent path and crashes
+  # the step at runtime. The comment step can't run in CI (needs a live PR), so
+  # this job locks the documented-correct idiom in source: the composite passes
+  # its `github.action_path` through the step env as ACTION_PATH and the script
+  # requires from that.
+  build-comment-require-source-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Comment step require resolves via the composite action path (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The composite must expose its own dir as ACTION_PATH...
+          # shellcheck disable=SC2016
+          if ! grep -Fq 'ACTION_PATH: ${{ github.action_path }}' action.yml; then
+            echo "action.yml comment step must pass github.action_path through the ACTION_PATH step env." >&2
+            exit 1
+          fi
+          # ...and the script must require the module from ACTION_PATH.
+          # shellcheck disable=SC2016
+          if ! grep -Fq 'require(`${process.env.ACTION_PATH}/scripts/build-comment.js`)' action.yml; then
+            echo "action.yml comment step must require build-comment.js via process.env.ACTION_PATH." >&2
+            exit 1
+          fi
+          # The broken bare-GITHUB_ACTION_PATH require (wrong dir inside a nested
+          # github-script step) must NOT reappear.
+          # shellcheck disable=SC2016
+          if grep -Fq 'process.env.GITHUB_ACTION_PATH}/scripts/build-comment.js' action.yml; then
             echo "action.yml reintroduced the GITHUB_ACTION_PATH require, which resolves to github-script's own dir inside the nested step." >&2
             exit 1
           fi
