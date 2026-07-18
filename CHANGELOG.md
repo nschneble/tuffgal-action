@@ -9,6 +9,7 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 ### Changed
 
 - `approve` commit step's pure logic (path guard, file walk, frame derivation, deletions set-difference) extracted into a unit-tested `approve/scripts/baseline-tree.js` module, covered by a `node --test` CI job
+- `approve` permission-gate trigger/actor resolution and fail-closed candidate-artifact selection extracted into unit-tested `approve/scripts/resolve-approver.js` and `select-candidate.js` modules, so the who-can-approve trust boundary and the ambiguity-fails-closed selection are covered by the same `node --test` CI job
 
 ### Fixed
 

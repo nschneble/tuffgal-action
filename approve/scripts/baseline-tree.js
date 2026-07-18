@@ -9,10 +9,14 @@
 // This module owns ONLY the pure pieces. The thin GitHub API calls
 // (createBlob / createTree / createCommit / updateRef) and the `git ls-tree`
 // execFileSync stay inline in action.yml; the inline script requires this module
-// and calls these functions. `guard`, `toRepoPath`, `computeDeletions`, and
-// `deriveFrames` reproduce the previous inline logic byte-for-byte; `walk`
-// additionally rejects symlinks fail-closed (a deliberate divergence — see its
-// SECURITY note).
+// and calls these functions. `toRepoPath`, `computeDeletions`, and `deriveFrames`
+// reproduce the previous inline logic byte-for-byte. Two functions diverge from
+// the inline original, both deliberately and both security-load-bearing:
+//   - `guard` throws the tagged `BaselineScopeError` instead of a bare `Error`,
+//     so a scope rejection is a distinguishable fail-closed type callers can
+//     re-throw rather than swallow (see the BaselineScopeError note).
+//   - `walk` additionally rejects symlinks fail-closed, also throwing
+//     `BaselineScopeError` (see its SECURITY note).
 //
 const path = require('path');
 
@@ -35,14 +39,14 @@ class BaselineScopeError extends Error {
 // prefix itself or nested under it. Returns the forward-slash-normalized path.
 // Throws `BaselineScopeError` on any rejection.
 function guard(candidatePath, prefix) {
-  const norm = candidatePath.replace(/\\/g, '/');
-  if (norm.startsWith('/') || norm.split('/').includes('..')) {
+  const normalized = candidatePath.replace(/\\/g, '/');
+  if (normalized.startsWith('/') || normalized.split('/').includes('..')) {
     throw new BaselineScopeError(`Refusing out-of-scope path: ${candidatePath}`);
   }
-  if (!(norm === prefix || norm.startsWith(prefix + '/'))) {
+  if (!(normalized === prefix || normalized.startsWith(prefix + '/'))) {
     throw new BaselineScopeError(`Refusing path outside baselines directory: ${candidatePath}`);
   }
-  return norm;
+  return normalized;
 }
 
 // Recursively collect every regular file under `dir`, returning absolute paths.
@@ -60,17 +64,19 @@ function guard(candidatePath, prefix) {
 // load-bearing here — `statSync` would report a symlink-to-dir as a directory
 // (recursing into the target) and a symlink-to-file as a plain file (blobbing
 // the target). Mirrors `validate-artifact.sh`'s fail-closed posture for the
-// sibling untrusted input (the candidates artifact).
+// sibling untrusted input (the candidates artifact). The refusal throws the
+// tagged `BaselineScopeError` — the SAME fail-closed type `guard` raises — so
+// both security throws are one distinguishable, catch-placement-independent type.
 function walk(dir, fs) {
   const out = [];
   if (!fs.existsSync(dir)) return out;
   for (const name of fs.readdirSync(dir)) {
     const full = path.join(dir, name);
-    const st = fs.lstatSync(full);
-    if (st.isSymbolicLink()) {
-      throw new Error(`Refusing symlink in baselines: ${full}`);
+    const stats = fs.lstatSync(full);
+    if (stats.isSymbolicLink()) {
+      throw new BaselineScopeError(`Refusing symlink in baselines: ${full}`);
     }
-    if (st.isDirectory()) out.push(...walk(full, fs));
+    if (stats.isDirectory()) out.push(...walk(full, fs));
     else out.push(full);
   }
   return out;

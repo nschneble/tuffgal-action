@@ -119,6 +119,17 @@ test('deriveFrames: a trailing slash on working-directory is normalized away', (
   });
 });
 
+test('deriveFrames: backslash workdir + trailing-slash baselines-path both normalize', () => {
+  // Exercises BOTH the backslash-normalize (on workdir and baselines-path) and
+  // the baselines-path trailing-slash strip in one case — neither was covered by
+  // the cases above, so both survived mutation.
+  assert.deepStrictEqual(deriveFrames('frontend\\sub', 'tuffgal\\baselines\\'), {
+    workdirPrefix: 'frontend/sub',
+    baselinesRelPosix: 'tuffgal/baselines',
+    prefix: 'frontend/sub/tuffgal/baselines',
+  });
+});
+
 // --- frame correctness --------------------------------------------------- //
 // Prove deletions are computed correctly under BOTH a '.' working-directory
 // (empty prefix) and a subdir working-directory. This locks the same invariant
@@ -222,6 +233,27 @@ test('walk: refuses a symlink to a file fail-closed', () => {
     fs.writeFileSync(path.join(root, 'real.png'), 'x');
     fs.symlinkSync(path.join(root, 'real.png'), path.join(root, 'leak.png'));
     assert.throws(() => walk(root, fs), /Refusing symlink/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("walk: the symlink refusal is a tagged BaselineScopeError, not a bare Error", () => {
+  // walk's symlink refusal is the SAME class of fail-closed security signal as
+  // guard's scope rejection — so it MUST be the same distinguishable type, not a
+  // bare Error. Reverting walk's throw back to `new Error(...)` fails this.
+  const root = mkTmp('bt-symtype-');
+  try {
+    fs.symlinkSync('/etc/passwd', path.join(root, 'leak.png'));
+    assert.throws(() => walk(root, fs), BaselineScopeError);
+    try {
+      walk(root, fs);
+      assert.fail('expected walk to throw');
+    } catch (error) {
+      assert.ok(error instanceof BaselineScopeError);
+      assert.ok(error instanceof Error);
+      assert.strictEqual(error.name, 'BaselineScopeError');
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
