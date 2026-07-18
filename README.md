@@ -209,7 +209,7 @@ jobs:
       - uses: nschneble/tuffgal-action/approve@v1
         with:
           working-directory: .
-          # artifact-name: tuffgal-candidates
+          # artifact-name: tuffgal-candidates # set a unique name per visual job for matrix / smoke suites
           # baselines-path: tuffgal/baselines
           # git-user-email: tuffgal-bot@users.noreply.github.com
           # git-user-name: tuffgal[bot]
@@ -268,6 +268,8 @@ by hand.
   would blob the secret target's bytes back onto the branch. A symlink there
   fails the job closed.
 - The comment body is never interpolated into a shell command.
+
+To report a vulnerability, see [SECURITY.md](.github/SECURITY.md).
 
 ### Implicit: download and approve locally
 

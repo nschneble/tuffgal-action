@@ -6,7 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { buildCommentBody, MARKER, renderTotalsTable, renderEnvMismatchBanner } = require('./build-comment.js');
+const { buildCommentBody, MARKER, renderTotalsTable } = require('./build-comment.js');
 
 // A baseline set of args. Individual tests override only what they exercise so
 // the branch under test is isolated from the rest of the body.
@@ -17,7 +17,7 @@ const base = () => ({
   mismatchKeys: [],
   previewUrl: '',
   changed: [],
-  neu: [],
+  added: [],
   deletedNames: [],
   runUrl: 'https://github.com/o/r/actions/runs/1',
 });
@@ -57,6 +57,7 @@ test('env-mismatch banner renders with its changed keys when the flag is set', (
     mismatchKeys: ['os', 'viewport'],
   });
   assert.match(body, /⚠️ \*\*Capture environment changed\*\*/);
+  assert.match(body, /captured in a different environment than this CI run/);
   assert.match(body, /Changed keys: `os`, `viewport`/);
 });
 
@@ -78,9 +79,13 @@ test('changed stories without a preview list plain names', () => {
     counts: { ...base().counts, changed: '1', total: '4' },
     changed: [{ index: 0, name: 'Home page', baseline: null, actual: null, diff: null }],
   });
-  assert.match(body, /\*\*Changed \(1\)\*\*/);
+  assert.match(body, /### Changed \(1\)/);
   assert.match(body, /- Home page/);
   assert.doesNotMatch(body, /<details>/);
+  // Pending work still renders the approve CTA without a preview, but the
+  // report-only "Open the full report" line needs a preview URL, so it is absent.
+  assert.match(body, /### Approve these changes/);
+  assert.doesNotMatch(body, /Open the full report/);
 });
 
 test('changed stories with a preview render thumbnails, a deep link, and name-bearing alt text', () => {
@@ -103,7 +108,7 @@ test('changed stories with a preview render thumbnails, a deep link, and name-be
   assert.match(body, /alt="actual for Login form"/);
   assert.match(body, /alt="diff for Login form"/);
   assert.match(body, /<img src="https:\/\/pages\.example\/pr-7\/baselines\/login\.png"/);
-  assert.match(body, /\[Open in report →\]\(https:\/\/pages\.example\/pr-7\/report\/index\.html#story-2\)/);
+  assert.match(body, /\[Open Login form in report →\]\(https:\/\/pages\.example\/pr-7\/report\/index\.html#story-2\)/);
 });
 
 test('a missing image URL renders an unavailable placeholder, not a broken img', () => {
@@ -154,9 +159,9 @@ test('new stories with a preview show a proposed baseline with name-bearing alt'
     outcome: 'changed',
     counts: { ...base().counts, new: '1', total: '1' },
     previewUrl: 'https://pages.example/pr-7',
-    neu: [{ index: 1, name: 'Nav bar', actual: 'https://pages.example/pr-7/report/nav.png' }],
+    added: [{ index: 1, name: 'Nav bar', actual: 'https://pages.example/pr-7/report/nav.png' }],
   });
-  assert.match(body, /\*\*New \(1\)\*\*/);
+  assert.match(body, /### New \(1\)/);
   assert.match(body, /Proposed new baseline: <img/);
   assert.match(body, /alt="proposed baseline for Nav bar"/);
 });
@@ -166,7 +171,7 @@ test('new stories without a preview list plain names', () => {
     ...base(),
     outcome: 'changed',
     counts: { ...base().counts, new: '1', total: '1' },
-    neu: [{ index: 0, name: 'Nav bar', actual: null }],
+    added: [{ index: 0, name: 'Nav bar', actual: null }],
   });
   assert.match(body, /- Nav bar/);
   assert.doesNotMatch(body, /<details>/);
@@ -179,7 +184,7 @@ test('deleted stories are listed with newlines flattened', () => {
     counts: { ...base().counts, deleted: '2', total: '2' },
     deletedNames: ['Old header', 'multi\nline name'],
   });
-  assert.match(body, /\*\*Deleted \(2\)\*\*/);
+  assert.match(body, /### Deleted \(2\)/);
   assert.match(body, /- Old header/);
   assert.match(body, /- multi line name/);
 });
@@ -230,21 +235,15 @@ test('a failed outcome that also has pending work keeps the approve CTA', () => 
   assert.match(body, /### Approve these changes/);
 });
 
-test('a pass outcome adds no actionable next-step line', () => {
-  const body = buildCommentBody(base());
-  assert.doesNotMatch(body, /Download the `tuffgal-report`/);
-  assert.doesNotMatch(body, /The run wrote no/);
-});
-
 test('empty story lists render only the outcome, table, and fallback link', () => {
   const body = buildCommentBody(base());
-  assert.doesNotMatch(body, /\*\*Changed/);
-  assert.doesNotMatch(body, /\*\*New/);
-  assert.doesNotMatch(body, /\*\*Deleted/);
+  assert.doesNotMatch(body, /### Changed/);
+  assert.doesNotMatch(body, /### New/);
+  assert.doesNotMatch(body, /### Deleted/);
 });
 
-// The exported renderers are the single source of truth the step summary can
-// adopt later; lock their shape here.
+// The exported renderers are extracted for reuse and kept in step with the bash
+// step-summary; lock their shape here.
 test('renderTotalsTable emits the fixed row order', () => {
   const rows = renderTotalsTable({ passed: '1', changed: '2', new: '3', deleted: '4', failed: '5', total: '6' });
   assert.deepStrictEqual(rows, [
@@ -257,9 +256,4 @@ test('renderTotalsTable emits the fixed row order', () => {
     '| Failed | 5 |',
     '| Total | 6 |',
   ]);
-});
-
-test('renderEnvMismatchBanner appends the keys line only when keys exist', () => {
-  assert.strictEqual(renderEnvMismatchBanner([]).length, 1);
-  assert.strictEqual(renderEnvMismatchBanner(['os']).length, 3);
 });

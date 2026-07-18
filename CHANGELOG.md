@@ -24,6 +24,7 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 - `approve` no longer wipes unchanged baselines when `working-directory` is a subdirectory
 - PR-comment thumbnails now name their story in the alt text, giving screen-reader users per-image context
+- the step-summary and PR-comment env-mismatch banners now share one wording, so the two surfaces can't drift
 - `no-results` and `failed` PR comments now name the concrete next step instead of dropping to a bare run link
 - PR-comment image `src` URLs are now attribute-escaped, matching the alt text
 - `approve` preflight points at the real `>= 0.2.0-alpha.1` requirement, not a nonexistent "v2"

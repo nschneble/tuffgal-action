@@ -853,89 +853,20 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - name: Surface step turns failed + no-results into a non-zero exit (source lock)
+      - name: Surface step exit condition pins every fail-mapped outcome (source lock)
         shell: bash
         run: |
           set -euo pipefail
-          # The parse step must map a non-zero failed count to the failed outcome...
-          if ! grep -Fq 'outcome="failed"' action.yml; then
-            echo "action.yml parse step must map a non-zero failed count to outcome=failed." >&2
+          # The "Surface harness exit code" step is what turns a parsed outcome
+          # into the job's exit code. Pin its FULL if: condition as one literal so
+          # dropping or reordering any arm — failed / no-results / env-mismatch /
+          # (fail-on-changed && changed) — trips this job. The parse precedence
+          # that PRODUCES those outcomes is exercised behaviorally by
+          # parse-malformed-results + the smoke-* jobs; this lock only asserts the
+          # outcome→non-zero-exit mapping stays intact.
+          expected="steps.outcome.outputs.outcome == 'failed' || steps.outcome.outputs.outcome == 'no-results' || steps.outcome.outputs.outcome == 'env-mismatch' || (inputs.fail-on-changed == 'true' && steps.outcome.outputs.outcome == 'changed')"
+          if ! grep -Fq "$expected" action.yml; then
+            echo "action.yml 'Surface harness exit code' if: condition changed — update this lock and confirm every fail-mapped outcome still exits non-zero." >&2
             exit 1
           fi
-          # ...and the surface step must exit non-zero for BOTH of these outcomes.
-          if ! grep -Fq "outcome == 'failed'" action.yml; then
-            echo "action.yml surface step must exit non-zero on outcome=failed." >&2
-            exit 1
-          fi
-          if ! grep -Fq "outcome == 'no-results'" action.yml; then
-            echo "action.yml surface step must exit non-zero on outcome=no-results." >&2
-            exit 1
-          fi
-
-      - name: Parse step maps failed + missing results.json to their outcomes (behavioral)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Mirrors the parse step's precedence tail (see action.yml "Parse
-          # harness outcome"): failed (1) > env-mismatch (3) > pending (2) > pass,
-          # with a missing/malformed results.json short-circuiting to no-results.
-          # Asserts the OUTCOME output the surface step keys off. The source-lock
-          # step above guards against the replay and the action diverging.
-          run_parse() { # $1 = report dir; writes the emitted outputs to $1/out
-            local results="$1/results.json"
-            local GITHUB_OUTPUT="$1/out"
-            : > "$GITHUB_OUTPUT"
-            (
-              set -euo pipefail
-              if [ ! -f "$results" ] || ! jq -e 'type == "object"' "$results" >/dev/null 2>&1; then
-                echo "outcome=no-results" >> "$GITHUB_OUTPUT"
-                exit 0
-              fi
-              failed=$(jq -r '.totals.failed // 0' "$results")
-              changed=$(jq -r '.totals.changed // 0' "$results")
-              new=$(jq -r '.totals.new // 0' "$results")
-              deleted=$(jq -r '.totals.deleted // 0' "$results")
-              mismatch=$(jq -r 'if .environment.mismatch == true then "true" else "false" end' "$results")
-              if [ "$((new + changed + deleted))" -gt 0 ]; then pending=true; else pending=false; fi
-              if [ "$failed" -gt 0 ]; then outcome="failed"
-              elif [ "$mismatch" = "true" ]; then outcome="env-mismatch"
-              elif [ "$pending" = "true" ]; then outcome="changed"
-              else outcome="pass"; fi
-              echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
-            )
-          }
-
-          assert_outcome() { # $1 = label, $2 = report dir, $3 = expected outcome
-            local rc=0
-            run_parse "$2" || rc=$?
-            if [ "$rc" -ne 0 ]; then
-              echo "FAIL[$1]: parse replay exited $rc, expected 0." >&2
-              exit 1
-            fi
-            if ! grep -Fxq "outcome=$3" "$2/out"; then
-              echo "FAIL[$1]: expected outcome=$3. Emitted:" >&2
-              cat "$2/out" >&2
-              exit 1
-            fi
-            echo "ok[$1]: outcome=$3"
-          }
-
-          base="$(mktemp -d)"
-
-          # A non-zero failed count maps to failed (which the surface step exits on).
-          d="$base/failed"; mkdir -p "$d"
-          printf '{"totals":{"failed":1,"stories":1}}' > "$d/results.json"
-          assert_outcome "failed" "$d" "failed"
-
-          # A missing results.json maps to no-results (also a surface-step exit).
-          d="$base/no-results"; mkdir -p "$d"
-          assert_outcome "no-results" "$d" "no-results"
-
-          # Control: a clean pass object maps to pass, NOT failed/no-results —
-          # proves the mapping does not over-trigger the non-zero exit.
-          d="$base/pass"; mkdir -p "$d"
-          printf '{"totals":{"passed":1,"stories":1}}' > "$d/results.json"
-          assert_outcome "pass" "$d" "pass"
-
-          echo "outcome-exit-code-mapping: all cases passed"
+          echo "outcome-exit-code-mapping: surface-step exit condition locked"

@@ -58,16 +58,16 @@ function isRetryablePushError(output) {
   return RETRYABLE.some((pattern) => pattern.test(text));
 }
 
-// Every TERMINAL signal above is a recognized ACCESS reason: the token lacks
-// write access, the credential is bad, or a branch protection declined the
-// push. Distinguish that from a merely unrecognized terminal error (or an
-// exhausted concurrent-PR race), which matches nothing here. Used ONLY to pick
-// the log level of the best-effort fallback — a recognized access gap is an
-// expected not-configured state (log a notice), anything else is surprising
-// (log a warning). Never touches the retry decision.
-function isPermissionPushError(output) {
+// True for the whole TERMINAL set — an auth failure, a bad credential, or a
+// branch protection declining the push: every one is an EXPECTED, recognized
+// reason a push can't succeed. Distinguish that from a merely unrecognized
+// terminal error (or an exhausted concurrent-PR race), which matches nothing
+// here. Used ONLY to pick the log level of the best-effort fallback — a
+// recognized failure is an expected not-configured state (log a notice),
+// anything else is surprising (log a warning). Never touches the retry decision.
+function isExpectedPushFailure(output) {
   const text = String(output || '');
   return TERMINAL.some((pattern) => pattern.test(text));
 }
 
-module.exports = { isRetryablePushError, isPermissionPushError };
+module.exports = { isRetryablePushError, isExpectedPushFailure };

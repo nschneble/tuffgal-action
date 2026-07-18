@@ -6,7 +6,7 @@ Please report security issues **privately** through GitHub's private
 vulnerability reporting: open the repo's **Security** tab → **Report a
 vulnerability**, or use the direct link:
 
-**https://github.com/nschneble/tuffgal-action/security/advisories/new**
+[Report a vulnerability](https://github.com/nschneble/tuffgal-action/security/advisories/new)
 
 This keeps the report confidential until a fix ships. **Please don't open a
 public issue for a security report** — a public issue discloses the problem

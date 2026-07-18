@@ -428,11 +428,11 @@ runs:
           let pushFailureExpected = false;
           try {
             // The PURE retryable-vs-terminal push classifier lives in a committed,
-            // unit-tested module (scripts/pages-push.js + the pages-push-retry-unit
+            // unit-tested module (scripts/pages-push.js + the scripts-unit
             // CI job); only the git side effects stay inline here. Required INSIDE
             // this never-fail block so even a module-load failure degrades to the
             // artifact-link fallback rather than failing the step.
-            const { isRetryablePushError, isPermissionPushError } = require(`${process.env.ACTION_PATH}/scripts/pages-push.js`);
+            const { isRetryablePushError, isExpectedPushFailure } = require(`${process.env.ACTION_PATH}/scripts/pages-push.js`);
             const maxAttempts = 3;
             for (let attempt = 1; ; attempt++) {
               syncClone();
@@ -451,7 +451,7 @@ runs:
                   // state → the fallback catch logs a notice. An unrecognized
                   // git failure, or an exhausted concurrent-PR race, stays a
                   // surprising warning.
-                  pushFailureExpected = isPermissionPushError(detail);
+                  pushFailureExpected = isExpectedPushFailure(detail);
                   throw error;
                 }
                 core.info(`Pages preview push rejected (attempt ${attempt}/${maxAttempts}); re-syncing the ${branch} tip and retrying.`);
@@ -461,7 +461,7 @@ runs:
           } catch (e) {
             const detail = redact(e.message);
             if (pushFailureExpected) {
-              core.notice(`Skipping the per-PR Pages preview — the job needs \`contents: write\` to push the ${branch} branch: ${detail}. The comment falls back to artifact-download links.`);
+              core.notice(`Skipping the per-PR Pages preview — the job needs \`contents: write\` (or a valid \`pages-token\`) to push the ${branch} branch: ${detail}. The comment falls back to artifact-download links.`);
             } else {
               core.warning(`Could not push the per-PR Pages preview (unexpected git failure): ${detail}. The comment falls back to artifact-download links.`);
             }
@@ -584,7 +584,7 @@ runs:
           // authoritative source. `index` is the story's position in the stories
           // array — the SAME ordinal template.ts renders as `id="story-<index>"`,
           // so `#story-<index>` deep-links land on the right story.
-          let changed = [], neu = [], deletedNames = [], mismatchKeys = [];
+          let changed = [], added = [], deletedNames = [], mismatchKeys = [];
           try {
             const r = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
             (r.stories || []).forEach((s, index) => {
@@ -596,7 +596,7 @@ runs:
               const name = String(s.story || s.file || `story ${index}`).replace(/[\r\n]+/g, ' ');
               if (statuses.includes('new')) {
                 const a = shotFrom('new');
-                neu.push({ index, name, actual: toPreviewUrl(a.actualPath) });
+                added.push({ index, name, actual: toPreviewUrl(a.actualPath) });
               } else if (statuses.includes('changed')) {
                 const a = shotFrom('changed');
                 changed.push({
@@ -622,7 +622,7 @@ runs:
           // module so the branch matrix is unit-tested.
           const body = buildCommentBody({
             outcome, counts, envMismatch, mismatchKeys, previewUrl,
-            changed, neu, deletedNames, runUrl,
+            changed, added, deletedNames, runUrl,
           });
           const issue_number = context.payload.pull_request.number;
 

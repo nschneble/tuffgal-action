@@ -13,8 +13,10 @@
 // The GitHub API side of the step — reading env, resolving results.json image
 // paths to preview URLs, and the `listComments` / `updateComment` /
 // `createComment` upsert — STAYS inline; this module owns ONLY the pure body
-// string. It shares its marker and its table/banner renderers back to the
-// caller so the sticky-comment surface has a single source of truth.
+// string. The marker and the table/banner renderers are extracted here for
+// reuse; the bash step-summary still hand-duplicates them (bash can't `require`
+// this module), so these are kept in step with that summary rather than being
+// its single source of truth.
 
 // Injected as the first line of every comment body. The upsert step greps for
 // this marker to find the comment to update, so it is exported rather than
@@ -22,37 +24,37 @@
 const MARKER = '<!-- tuffgal-report -->';
 
 // Escape text for HTML flow content (story names in a <summary>).
-const esc = (s) =>
-  String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escapeHtml = (text) =>
+  String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 // Escape text for an HTML attribute value (the <img> src URL and alt text).
 // Extends the flow escape with `"` so a value carrying a double quote — a
 // crafted story name in the alt, or a stray quote in an image path in the src —
 // can't break out of the attribute. Cosmetic markdown-injection hardening.
-const escAttr = (s) => esc(s).replace(/"/g, '&quot;');
+const escapeAttribute = (text) => escapeHtml(text).replace(/"/g, '&quot;');
 
 // One inline thumbnail, or an italic placeholder when its preview URL is null
 // (preview off, or the image lives under neither report nor baselines root).
-const thumb = (url, label) =>
+const thumbnail = (url, label) =>
   url
-    ? `<img src="${escAttr(url)}" alt="${escAttr(label)}" width="260">`
-    : `<em>${esc(label)} unavailable</em>`;
+    ? `<img src="${escapeAttribute(url)}" alt="${escapeAttribute(label)}" width="260">`
+    : `<em>${escapeHtml(label)} unavailable</em>`;
 
-// The env-mismatch banner. Shared so the step summary can render the same text
-// later; wording is kept identical to the bash summary in the harness step.
+// The env-mismatch banner. Extracted for reuse; the bash step-summary still
+// hand-duplicates this wording, so the two are kept in step with each other.
 function renderEnvMismatchBanner(mismatchKeys) {
   const out = [
     '> ⚠️ **Capture environment changed** — the committed baselines were captured in a different environment than this CI run. Comparison still ran, but expect a full re-approve.',
   ];
   if (mismatchKeys && mismatchKeys.length) {
     out.push('>');
-    out.push('> Changed keys: ' + mismatchKeys.map((k) => '`' + k + '`').join(', '));
+    out.push('> Changed keys: ' + mismatchKeys.map((key) => '`' + key + '`').join(', '));
   }
   return out;
 }
 
-// The outcome totals table. Shared for the same single-source-of-truth reason;
-// row order + labels are kept identical to the bash summary.
+// The outcome totals table. Extracted for reuse; the bash step-summary still
+// hand-duplicates it, so row order + labels are kept in step with that summary.
 function renderTotalsTable(counts) {
   return [
     '| Status | Count |',
@@ -83,7 +85,7 @@ const ACTIONABLE = {
 //   mismatchKeys  string[] — the changed environment keys, listed under the banner
 //   previewUrl    normalized Pages URL (no trailing slash), or '' when no preview
 //   changed       [{ index, name, baseline, actual, diff }] — image URLs or null
-//   neu           [{ index, name, actual }] — proposed-baseline image URL or null
+//   added         [{ index, name, actual }] — proposed-baseline image URL or null
 //   deletedNames  string[] — names of removed stories
 //   runUrl        the workflow-run URL for the fallback link
 function buildCommentBody({
@@ -93,12 +95,12 @@ function buildCommentBody({
   mismatchKeys,
   previewUrl,
   changed,
-  neu,
+  added,
   deletedNames,
   runUrl,
 }) {
   const reportUrl = previewUrl ? `${previewUrl}/report/index.html` : null;
-  const storyLink = (e) => (reportUrl ? `${reportUrl}#story-${e.index}` : null);
+  const storyLink = (entry) => (reportUrl ? `${reportUrl}#story-${entry.index}` : null);
   const pending =
     (Number(counts.new) || 0) + (Number(counts.changed) || 0) + (Number(counts.deleted) || 0) > 0;
 
@@ -121,23 +123,23 @@ function buildCommentBody({
   // fall back to a plain name list. The alt text threads the story name so a
   // screen-reader user gets per-image context in a multi-story comment.
   if (changed.length) {
-    lines.push(`**Changed (${changed.length})**`);
+    lines.push(`### Changed (${changed.length})`);
     lines.push('');
-    for (const e of changed) {
+    for (const entry of changed) {
       if (previewUrl) {
         lines.push('<details>');
-        lines.push(`<summary>${esc(e.name)}</summary>`);
+        lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
         lines.push('');
         lines.push('| Baseline | Actual | Diff |');
         lines.push('|---|---|---|');
         lines.push(
-          `| ${thumb(e.baseline, `baseline for ${e.name}`)} | ${thumb(e.actual, `actual for ${e.name}`)} | ${thumb(e.diff, `diff for ${e.name}`)} |`,
+          `| ${thumbnail(entry.baseline, `baseline for ${entry.name}`)} | ${thumbnail(entry.actual, `actual for ${entry.name}`)} | ${thumbnail(entry.diff, `diff for ${entry.name}`)} |`,
         );
         lines.push('');
-        lines.push(`[Open in report →](${storyLink(e)})`);
+        lines.push(`[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`);
         lines.push('</details>');
       } else {
-        lines.push(`- ${e.name}`);
+        lines.push(`- ${entry.name}`);
       }
     }
     lines.push('');
@@ -145,28 +147,30 @@ function buildCommentBody({
 
   // New: no prior baseline to compare, so show the proposed one (the run's
   // actual = the candidate) inline.
-  if (neu.length) {
-    lines.push(`**New (${neu.length})**`);
+  if (added.length) {
+    lines.push(`### New (${added.length})`);
     lines.push('');
-    for (const e of neu) {
+    for (const entry of added) {
       if (previewUrl) {
         lines.push('<details>');
-        lines.push(`<summary>${esc(e.name)}</summary>`);
+        lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
         lines.push('');
-        lines.push(`Proposed new baseline: ${thumb(e.actual, `proposed baseline for ${e.name}`)}`);
+        lines.push(
+          `Proposed new baseline: ${thumbnail(entry.actual, `proposed baseline for ${entry.name}`)}`,
+        );
         lines.push('');
-        lines.push(`[Open in report →](${storyLink(e)})`);
+        lines.push(`[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`);
         lines.push('</details>');
       } else {
-        lines.push(`- ${e.name}`);
+        lines.push(`- ${entry.name}`);
       }
     }
     lines.push('');
   }
 
   if (deletedNames.length) {
-    lines.push(`**Deleted (${deletedNames.length})**`);
-    for (const n of deletedNames) lines.push(`- ${String(n).replace(/[\r\n]+/g, ' ')}`);
+    lines.push(`### Deleted (${deletedNames.length})`);
+    for (const name of deletedNames) lines.push(`- ${String(name).replace(/[\r\n]+/g, ' ')}`);
     lines.push('');
   }
 
