@@ -257,6 +257,34 @@ jobs:
             exit 1
           fi
 
+  # Source lock for the Pages-step token-leak fix. That step embeds the push
+  # token in a credentialed remote URL, and an execFileSync error message
+  # carries the full argv — so without masking, a custom pages-token (only
+  # auto-masked when it comes from a secret) would print in cleartext on any git
+  # failure. The step can't run in CI (needs a live PR), so this job locks the
+  # two guards in source: the token is registered with the runner's log masking
+  # (core.setSecret) and the push-error surface is redacted before logging.
+  pages-token-mask-require-source-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Pages step masks + redacts the push token (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The token must be registered with the runner's secret masking so it
+          # is redacted everywhere in the log stream.
+          if ! grep -Fq 'core.setSecret(token)' action.yml; then
+            echo "action.yml Pages step must call core.setSecret(token) so a custom pages-token is masked in the logs." >&2
+            exit 1
+          fi
+          # The push-failure log must go through the redactor, never emit the raw
+          # error message (which carries the credentialed remote URL).
+          if ! grep -Fq 'redact(e.message)' action.yml; then
+            echo "action.yml Pages step must redact the push error before logging it (redact(e.message))." >&2
+            exit 1
+          fi
+
   smoke-pass:
     runs-on: ubuntu-latest
     steps:

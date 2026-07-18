@@ -309,10 +309,12 @@ runs:
     # branch; each replaces only its own `pr-<n>/` subtree, so a second push
     # rejected non-fast-forward just needs the advanced tip re-synced and this
     # PR's (idempotent) subtree re-applied — the push is retried a couple of
-    # times before falling back. Best-effort: an exhausted retry, or any
-    # terminal failure (no contents:write, Pages off, private repo), logs a
-    # warning and leaves preview-url empty, and the comment falls back to
-    # artifact-download links. Never fails the job.
+    # times before falling back. Best-effort: a recognized not-configured state
+    # (no contents:write, Pages off, private repo) logs a notice, while an
+    # unexpected git/API failure logs a warning; either way preview-url is left
+    # empty and the comment falls back to artifact-download links. The push
+    # token is masked (core.setSecret) and redacted from error logs so a custom
+    # pages-token can't leak in cleartext. Never fails the job.
     - name: Publish per-PR preview to GitHub Pages
       id: pages
       if: always() && github.event_name == 'pull_request' && inputs.pages-preview == 'true' && steps.outcome.outputs.pending == 'true'
@@ -351,7 +353,15 @@ runs:
 
           const run = (cmd, args, opts) =>
             execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts });
-          const token = process.env.GITHUB_TOKEN || process.env.INPUT_GITHUB_TOKEN;
+          const token = process.env.GITHUB_TOKEN;
+          // Register the push token with the runner's log masking. GITHUB_TOKEN
+          // is auto-masked, but a custom pages-token from a non-secret path is
+          // not — without this it (and the credentialed remote below) would
+          // print in cleartext on any git failure, since an execFileSync error
+          // message carries the full argv. redact() is a second guard for any
+          // surface that bypasses masking.
+          if (token) core.setSecret(token);
+          const redact = (value) => (token ? String(value).split(token).join('***') : String(value));
           const remote = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
           const work = path.join(process.env.RUNNER_TEMP, 'tuffgal-pages');
 
@@ -409,13 +419,20 @@ runs:
           //    and retry a few times. A terminal failure (no contents:write) or
           //    an exhausted retry aborts with an empty preview-url, so the
           //    comment falls back to artifact links.
+          //
+          //    Declared out here so it survives into the fallback catch: a
+          //    recognized access gap (no contents:write) is an expected
+          //    not-configured state the catch logs as a notice, while an
+          //    unexpected git failure (or a module-load failure, which leaves
+          //    this false) stays a surprising warning.
+          let pushFailureExpected = false;
           try {
             // The PURE retryable-vs-terminal push classifier lives in a committed,
             // unit-tested module (scripts/pages-push.js + the pages-push-retry-unit
             // CI job); only the git side effects stay inline here. Required INSIDE
             // this never-fail block so even a module-load failure degrades to the
             // artifact-link fallback rather than failing the step.
-            const { isRetryablePushError } = require(`${process.env.ACTION_PATH}/scripts/pages-push.js`);
+            const { isRetryablePushError, isPermissionPushError } = require(`${process.env.ACTION_PATH}/scripts/pages-push.js`);
             const maxAttempts = 3;
             for (let attempt = 1; ; attempt++) {
               syncClone();
@@ -428,13 +445,26 @@ runs:
                   String((error && error.stdout) || '') + String((error && error.stderr) || '') + String((error && error.message) || '');
                 // A non-fast-forward means a concurrent PR advanced the shared
                 // tip — re-sync and re-apply. A permission failure never recovers.
-                if (attempt >= maxAttempts || !isRetryablePushError(detail)) throw error;
+                if (attempt >= maxAttempts || !isRetryablePushError(detail)) {
+                  // A recognized access gap (no contents:write, protected
+                  // branch, bad credential) is an expected not-configured
+                  // state → the fallback catch logs a notice. An unrecognized
+                  // git failure, or an exhausted concurrent-PR race, stays a
+                  // surprising warning.
+                  pushFailureExpected = isPermissionPushError(detail);
+                  throw error;
+                }
                 core.info(`Pages preview push rejected (attempt ${attempt}/${maxAttempts}); re-syncing the ${branch} tip and retrying.`);
                 await sleep(attempt * 500);
               }
             }
           } catch (e) {
-            core.warning(`Could not push the per-PR Pages preview (need contents: write?): ${e.message}. The comment will fall back to artifact-download links.`);
+            const detail = redact(e.message);
+            if (pushFailureExpected) {
+              core.notice(`Skipping the per-PR Pages preview — the job needs \`contents: write\` to push the ${branch} branch: ${detail}. The comment falls back to artifact-download links.`);
+            } else {
+              core.warning(`Could not push the per-PR Pages preview (unexpected git failure): ${detail}. The comment falls back to artifact-download links.`);
+            }
             core.setOutput('preview-url', '');
             return;
           }
@@ -460,10 +490,17 @@ runs:
               core.info(`Enabled GitHub Pages for ${owner}/${repo} (source: ${branch}).`);
               baseUrl = await readBase();
             } catch (e2) {
-              const hint = (e2.status === 403 || e2.status === 404)
+              // A 403/404 is the expected not-configured state: the default
+              // GITHUB_TOKEN cannot create the site, or Pages is simply off.
+              // Log a notice. Any other status is a surprising API failure and
+              // stays a warning.
+              const expected = e2.status === 403 || e2.status === 404;
+              const hint = expected
                 ? `The default GITHUB_TOKEN cannot create a Pages site. Either enable Pages once by hand (Settings → Pages → source: the ${branch} branch), or pass an admin PAT/App token via the \`pages-token\` input to auto-enable it.`
                 : `Enable Pages (source: the ${branch} branch) to get deep-link previews.`;
-              core.warning(`GitHub Pages is not enabled and could not be enabled automatically (${e2.status || e2.message}); the branch was pushed. ${hint} Falling back to artifact links.`);
+              const message = `GitHub Pages is not enabled and could not be enabled automatically (${e2.status || e2.message}); the branch was pushed. ${hint} Falling back to artifact links.`;
+              if (expected) core.notice(message);
+              else core.warning(message);
               core.setOutput('preview-url', '');
               return;
             }

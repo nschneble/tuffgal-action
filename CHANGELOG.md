@@ -23,9 +23,11 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 - `approve` preflight points at the real `>= 0.2.0-alpha.1` requirement, not a nonexistent "v2"
 - Malformed `results.json` now reports `no-results` instead of crashing the parse step
 - Per-PR Pages preview survives overlapping visual runs (the push retries instead of dropping to artifact links)
+- Per-PR Pages preview logs expected degradation (no `contents: write`, Pages not enabled) as a notice instead of a warning, reserving warnings for genuinely unexpected failures
 
 ### Security
 
+- Per-PR Pages preview masks its push token and redacts it from git error logs, so a custom `pages-token` can't leak in cleartext on a push failure
 - `approve` refuses symlinks in the PR head's seeded baselines, fail-closed
 - Every third-party action is SHA-pinned, with a Dependabot config keeping the pins fresh
 

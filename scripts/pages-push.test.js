@@ -7,7 +7,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { isRetryablePushError } = require('./pages-push.js');
+const { isRetryablePushError, isPermissionPushError } = require('./pages-push.js');
 
 // Real `git push` stderr for a concurrent-PR race: the shared branch tip
 // advanced between our shallow clone and our push, so ours is rejected
@@ -82,4 +82,39 @@ test('empty / nullish input is terminal', () => {
   assert.strictEqual(isRetryablePushError(''), false);
   assert.strictEqual(isRetryablePushError(undefined), false);
   assert.strictEqual(isRetryablePushError(null), false);
+});
+
+// isPermissionPushError drives only the LOG LEVEL of the fallback: a recognized
+// access gap degrades quietly (notice), an unrecognized failure warns.
+test('a 403 (no contents: write) is a permission error', () => {
+  const out =
+    "remote: Permission to owner/repo.git denied to tuffgal[bot].\n" +
+    "fatal: unable to access 'https://github.com/owner/repo.git/': The requested URL returned error: 403";
+  assert.strictEqual(isPermissionPushError(out), true);
+});
+
+test('a write-access denial is a permission error', () => {
+  assert.strictEqual(isPermissionPushError('remote: Write access to repository not granted.'), true);
+});
+
+test('a protected-branch decline is a permission error', () => {
+  const out = [
+    'remote: error: GH006: Protected branch update failed for refs/heads/gh-pages.',
+    ' ! [remote rejected] gh-pages -> gh-pages (protected branch hook declined)',
+  ].join('\n');
+  assert.strictEqual(isPermissionPushError(out), true);
+});
+
+test('a non-fast-forward race is NOT a permission error (an exhausted retry warns)', () => {
+  assert.strictEqual(isPermissionPushError(NON_FAST_FORWARD), false);
+});
+
+test('an unrecognized git failure is NOT a permission error (it warns)', () => {
+  assert.strictEqual(isPermissionPushError('fatal: the remote end hung up unexpectedly'), false);
+});
+
+test('empty / nullish input is not a permission error', () => {
+  assert.strictEqual(isPermissionPushError(''), false);
+  assert.strictEqual(isPermissionPushError(undefined), false);
+  assert.strictEqual(isPermissionPushError(null), false);
 });
