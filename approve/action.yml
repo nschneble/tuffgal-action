@@ -304,13 +304,14 @@ runs:
 
     # ------------------------------------------------------------------ #
     # 5. Preflight the trusted default-branch CLI for `approve --from`    #
-    #    support BEFORE we invoke it. A pre-v2 tuffgal has no `--from`,   #
-    #    silently falls through to a plain `approve`, and dies with a     #
-    #    cryptic "no prior run" error. We probe the CLI's own help text   #
-    #    for the flag (robust across prerelease version ordering) and, if #
-    #    it's missing, post a pointed comment and fail. Gated identically #
-    #    to the apply step so a stale-tuffgal repo with NO candidates     #
-    #    still gets the friendlier "No candidates found" path, not this.  #
+    #    support BEFORE we invoke it. A tuffgal older than                #
+    #    `0.2.0-alpha.1` has no `--from`, silently falls through to a     #
+    #    plain `approve`, and dies with a cryptic "no prior run" error.   #
+    #    We probe the CLI's own help text for the flag (robust across     #
+    #    prerelease version ordering) and, if it's missing, post a        #
+    #    pointed comment and fail. Gated identically to the apply step so #
+    #    a stale-tuffgal repo with NO candidates still gets the           #
+    #    friendlier "No candidates found" path, not this.                 #
     # ------------------------------------------------------------------ #
     - name: Preflight tuffgal supports approve --from
       if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
@@ -325,9 +326,10 @@ runs:
 
           // Probe the ACTUAL CLI surface, not a version string. `tuffgal help`
           // prints its full usage (and returns before loading any config), so a
-          // build that supports `approve --from` lists the flag and a pre-v2
-          // build does not. This dodges the prerelease-ordering trap where a
-          // naive semver string compare ranks `-alpha.10` below `-alpha.2`.
+          // build that supports `approve --from` lists the flag and a build
+          // predating `0.2.0-alpha.1` does not. This dodges the
+          // prerelease-ordering trap where a naive semver string compare
+          // ranks `-alpha.10` below `-alpha.2`.
           // Runs the same trusted base deps `npm ci` installed and the apply
           // step invokes — no head-branch code is executed.
           let help = '';
@@ -354,7 +356,7 @@ runs:
               '<!-- tuffgal-approve -->',
               '🧭 The tuffgal pinned on this repo\'s default branch predates `approve --from`, so the bot can\'t promote candidate baselines from here.',
               '',
-              'Land the tuffgal dependency bump (v2+) on the default branch, then comment `@tuffgal approve` again.',
+              'Land the tuffgal dependency bump (`>= 0.2.0-alpha.1`) on the default branch, then comment `@tuffgal approve` again.',
             ].join('\n'),
           });
           core.setFailed('Installed tuffgal does not support `approve --from`; bump tuffgal on the default branch.');

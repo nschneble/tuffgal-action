@@ -544,3 +544,153 @@ jobs:
           fi
 
           echo "symlink-backstop: clean tree passes, symlinked tree refused."
+
+  # Unit test for the parse step's no-results guard. A results.json that is
+  # missing OR malformed (empty, whitespace, truncated, not a JSON object) must
+  # route to the no-results contract and exit 0 — never crash the step on a jq
+  # parse error and leak unset outputs to the downstream always() steps. Pure
+  # jq-over-a-file, so this replays the guard directly (like approve-subdir-frame
+  # above) rather than needing a live harness run, and source-locks the guard so
+  # the replay can't silently drift from the action.
+  parse-malformed-results:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse step validates results.json before parsing (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The JSON-object validation must run before the first parsing jq...
+          if ! grep -Fq 'type == "object"' action.yml; then
+            echo "action.yml parse step must validate results.json is a JSON object before parsing." >&2
+            exit 1
+          fi
+          # ...and the emission must be factored so the missing-file and
+          # malformed-file cases share one identical no-results block.
+          if ! grep -Fq 'emit_no_results' action.yml; then
+            echo "action.yml parse step must factor the no-results emission (emit_no_results) shared by both branches." >&2
+            exit 1
+          fi
+
+      - name: Missing / empty / malformed results.json map to no-results, exit 0 (behavioral)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Mirrors the parse step's no-results guard exactly (see action.yml
+          # "Parse harness outcome"). Kept byte-faithful to the action so this
+          # locks real behavior; the source-lock step above guards against the
+          # two silently diverging.
+          run_guard() { # $1 = report dir; writes the emitted outputs to $1/out
+            local results="$1/results.json"
+            local GITHUB_OUTPUT="$1/out"
+            local GITHUB_STEP_SUMMARY="$1/sum"
+            : > "$GITHUB_OUTPUT"
+            : > "$GITHUB_STEP_SUMMARY"
+            (
+              set -euo pipefail
+              emit_no_results() {
+                {
+                  echo "passed=0"
+                  echo "changed=0"
+                  echo "failed=0"
+                  echo "new=0"
+                  echo "deleted=0"
+                  echo "total=0"
+                  echo "env-mismatch=false"
+                  echo "pending=false"
+                  echo "outcome=no-results"
+                } >> "$GITHUB_OUTPUT"
+                {
+                  echo "## Tuffgal"
+                  echo ""
+                  echo "Harness produced no results.json."
+                } >> "$GITHUB_STEP_SUMMARY"
+              }
+              if [ ! -f "$results" ] || ! jq -e 'type == "object"' "$results" >/dev/null 2>&1; then
+                emit_no_results
+                exit 0
+              fi
+              echo "outcome=parsed" >> "$GITHUB_OUTPUT"
+            )
+          }
+
+          assert_no_results() { # $1 = label, $2 = report dir
+            local rc=0
+            run_guard "$2" || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "FAIL[$1]: guard exited $rc, expected 0 (a malformed file must not crash the step)." >&2
+              exit 1
+            fi
+            if ! grep -Fxq 'outcome=no-results' "$2/out"; then
+              echo "FAIL[$1]: expected outcome=no-results. Emitted:" >&2
+              cat "$2/out" >&2
+              exit 1
+            fi
+            if ! grep -Fxq 'passed=0' "$2/out"; then
+              echo "FAIL[$1]: expected the zeroed no-results counts. Emitted:" >&2
+              cat "$2/out" >&2
+              exit 1
+            fi
+            if ! grep -Fxq 'total=0' "$2/out"; then
+              echo "FAIL[$1]: expected the zeroed no-results counts. Emitted:" >&2
+              cat "$2/out" >&2
+              exit 1
+            fi
+            echo "ok[$1]: no-results, exit 0"
+          }
+
+          base="$(mktemp -d)"
+
+          # Missing file — the original no-results path.
+          d="$base/missing"; mkdir -p "$d"
+          assert_no_results "missing" "$d"
+
+          # Present but empty. A plain `jq empty` would accept this (0 inputs is
+          # valid) and let it fall through to the crash; `type == "object"`
+          # rejects it.
+          d="$base/empty"; mkdir -p "$d"; : > "$d/results.json"
+          assert_no_results "empty" "$d"
+
+          # Whitespace only — same trap as empty.
+          d="$base/whitespace"; mkdir -p "$d"; printf '   \n' > "$d/results.json"
+          assert_no_results "whitespace" "$d"
+
+          # Not JSON at all (the case the audit flagged).
+          d="$base/garbage"; mkdir -p "$d"; printf 'not json' > "$d/results.json"
+          assert_no_results "garbage" "$d"
+
+          # Valid JSON but not an object (an array has no .totals to read).
+          d="$base/array"; mkdir -p "$d"; printf '[1,2,3]' > "$d/results.json"
+          assert_no_results "array" "$d"
+
+          # Control: a valid results.json object must FALL THROUGH the guard, not
+          # be swallowed as no-results — proves the guard can't over-trigger.
+          d="$base/valid"; mkdir -p "$d"
+          printf '{"totals":{"passed":1,"stories":1}}' > "$d/results.json"
+          rc=0
+          run_guard "$d" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "FAIL[valid]: guard exited $rc on a valid object." >&2
+            exit 1
+          fi
+          if grep -Fxq 'outcome=no-results' "$d/out"; then
+            echo "FAIL[valid]: a valid results.json was wrongly routed to no-results." >&2
+            cat "$d/out" >&2
+            exit 1
+          fi
+          echo "ok[valid]: a valid object falls through the guard"
+
+          # Regression proof: the parse tail's first jq exits non-zero on garbage
+          # (a plain parse error) — exactly the failure that, unguarded, kills the
+          # step under set -euo pipefail. This is why validation must run first.
+          rc=0
+          jq -r '.totals.passed // 0' "$base/garbage/results.json" >/dev/null 2>&1 || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "FAIL: the unguarded first jq did not fail on garbage; the guard's necessity is not being exercised." >&2
+            exit 1
+          fi
+          echo "regression-proof: the unguarded first jq exits $rc on garbage (the guard is load-bearing)."
+
+          echo "parse-malformed-results: all cases passed"

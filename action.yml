@@ -172,7 +172,12 @@ runs:
       run: |
         set -euo pipefail
         results="$TUFFGAL_REPORT_PATH/results.json"
-        if [ ! -f "$results" ]; then
+
+        # Emit the no-results contract (zeroed counts + a no-results outcome) and
+        # the step summary, leaving the step SUCCESSFUL so downstream always()
+        # steps still see defined outputs. Shared by the missing-file and the
+        # malformed-JSON branches below so both emit an identical block.
+        emit_no_results() {
           {
             echo "passed=0"
             echo "changed=0"
@@ -189,6 +194,16 @@ runs:
             echo ""
             echo "Harness produced no \`results.json\`. Treating as failed."
           } >> "$GITHUB_STEP_SUMMARY"
+        }
+
+        # No results file, or a file that isn't a valid JSON object (empty,
+        # truncated, or otherwise malformed). Validate ONCE up front: without
+        # this, the first `jq` below runs against garbage, spews a parse error,
+        # and — with the later integer tests under `set -euo pipefail` — kills
+        # the step mid-way, leaking unset outputs to the always() steps. Route
+        # both cases to the same no-results contract and exit cleanly instead.
+        if [ ! -f "$results" ] || ! jq -e 'type == "object"' "$results" >/dev/null 2>&1; then
+          emit_no_results
           exit 0
         fi
 
