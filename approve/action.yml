@@ -423,6 +423,16 @@ runs:
           const { execFileSync } = require('child_process');
           const { owner, repo } = context.repo;
 
+          // The PURE, security-sensitive logic — the out-of-scope/traversal path
+          // `guard`, the recursive file `walk`, the `toRepoPath` frame re-anchor,
+          // and the `computeDeletions` (atHead \ onDisk) set-difference — lives in
+          // a committed, unit-tested module. The thin GitHub git-data API calls
+          // (createBlob / createTree / createCommit / updateRef) and the
+          // `git ls-tree` below stay inline. See the module header and the
+          // `baseline-tree-unit` CI job.
+          const { guard, walk, toRepoPath, computeDeletions } =
+            require(`${process.env.GITHUB_ACTION_PATH}/scripts/baseline-tree.js`);
+
           const workdir = process.env.WORKDIR || '.';
           const baselinesRel = process.env.BASELINES_PATH;              // working-directory-relative (matches the input contract)
           const baselinesAbs = path.join(workdir, baselinesRel);
@@ -436,35 +446,13 @@ runs:
           const baselinesRelPosix = baselinesRel.replace(/\\/g, '/').replace(/\/$/, '');
           const prefix = path.posix.join(workdirPrefix, baselinesRelPosix).replace(/\/$/, '');
 
-          const guard = (p) => {
-            const norm = p.replace(/\\/g, '/');
-            if (norm.startsWith('/') || norm.split('/').includes('..')) {
-              throw new Error(`Refusing out-of-scope path: ${p}`);
-            }
-            if (!(norm === prefix || norm.startsWith(prefix + '/'))) {
-              throw new Error(`Refusing path outside baselines directory: ${p}`);
-            }
-            return norm;
-          };
-
-          // Files currently on disk under baselines (post-approve desired state).
-          const walk = (d) => {
-            const out = [];
-            if (!fs.existsSync(d)) return out;
-            for (const name of fs.readdirSync(d)) {
-              const full = path.join(d, name);
-              const st = fs.statSync(full);
-              if (st.isDirectory()) out.push(...walk(full));
-              else out.push(full);
-            }
-            return out;
-          };
-          // Re-anchor to the repo-root frame (workdirPrefix + workdir-relative
-          // path) so onDisk, atHead, prefix, and the git-tree API all agree —
-          // correct for both working-directory '.' and a subdir.
-          const onDisk = walk(baselinesAbs).map(f => {
+          // Files currently on disk under baselines (post-approve desired state),
+          // each re-anchored to the repo-root frame via toRepoPath so onDisk,
+          // atHead, prefix, and the git-tree API all agree — correct for both
+          // working-directory '.' and a subdir.
+          const onDisk = walk(baselinesAbs, fs).map(f => {
             const rel = path.relative(workdir, f).split(path.sep).join('/');
-            return { repoPath: guard(path.posix.join(workdirPrefix, rel)), absPath: f };
+            return { repoPath: toRepoPath(rel, workdirPrefix, prefix), absPath: f };
           });
 
           // Files under baselines at the head commit (to compute deletions).
@@ -476,13 +464,12 @@ runs:
               cwd: workdir, encoding: 'utf8',
             });
             atHead = listed.split('\n').map(s => s.trim()).filter(Boolean)
-              .map(name => guard(path.posix.join(workdirPrefix, name)));
+              .map(name => toRepoPath(name, workdirPrefix, prefix));
           } catch (e) {
             core.info(`No baselines at head (${e.message}); treating as bootstrap.`);
           }
 
-          const onDiskSet = new Set(onDisk.map(f => f.repoPath));
-          const deletions = atHead.filter(p => !onDiskSet.has(p));
+          const deletions = computeDeletions(onDisk.map(f => f.repoPath), atHead);
 
           // Build tree entries: blobs for present files, null-sha deletions.
           // Blob creation is a content-generating POST per file; a real baseline

@@ -6,6 +6,10 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+### Changed
+
+- `approve` commit step's pure logic (path guard, file walk, deletions set-difference) extracted into a committed, unit-tested `approve/scripts/baseline-tree.js` module, with a `node --test` CI job — the security-sensitive tree math is now covered without a live GitHub run
+
 ### Fixed
 
 - `approve` no longer deletes unchanged baselines for consumers whose `working-directory` is a subdirectory — the head-baseline seed guard was repo-root-relative while `baselines-path` is working-directory-relative, so the seed silently skipped and prune removed every untouched baseline

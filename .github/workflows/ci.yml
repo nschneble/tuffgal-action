@@ -85,6 +85,22 @@ jobs:
 
           echo "validator: all cases passed"
 
+  # Unit test for the approve commit step's PURE logic — path guard, file walk,
+  # and the deletions set-difference — extracted into approve/scripts/
+  # baseline-tree.js. No live GitHub run needed; no deps beyond Node's built-in
+  # node:test + node:assert. Also unit-locks T1's subdir-frame correctness
+  # alongside the approve-subdir-frame smoke job below.
+  baseline-tree-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run baseline-tree unit tests
+        shell: bash
+        run: node --test approve/scripts/*.test.js
+
   smoke-pass:
     runs-on: ubuntu-latest
     steps:
