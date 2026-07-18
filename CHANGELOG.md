@@ -10,6 +10,8 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 - `approve` commit-step logic extracted into a unit-tested `baseline-tree.js` module
 - `approve` gate resolver and candidate selection extracted into unit-tested `resolve-approver.js` and `select-candidate.js` modules
+- the `Run Tuffgal` harness step now runs under `set -euo pipefail`, like every other bash block
+- CI now exercises the `failed` / `no-results` exit-code legs and the artifact validator's backslash-path rejection
 
 ### Fixed
 

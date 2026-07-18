@@ -149,7 +149,7 @@ runs:
         TUFFGAL_HEADED: ${{ inputs.headed }}
         TUFFGAL_COVERAGE: ${{ inputs.coverage }}
       run: |
-        set -e
+        set -euo pipefail
         args=(run --ci --manage-servers)
         if [ -n "$TUFFGAL_STORY" ]; then
           args+=(--story "$TUFFGAL_STORY")
