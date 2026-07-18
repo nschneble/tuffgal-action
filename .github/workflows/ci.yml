@@ -446,3 +446,62 @@ jobs:
           fi
 
           echo "subdir-frame: OLD guard skips the seed, NEW guard seeds, default '.' unaffected."
+
+  # Security lock for the seeded-baselines symlink-follow vector (T2, HIGH). The
+  # PR head tree is untrusted (a write collaborator controls it) and `git archive
+  # | tar -x` recreates any symlink committed under baselines; the commit step
+  # reads file bytes to blob them, so a followed symlink would exfiltrate its
+  # target (a secret) onto the PR branch. The apply step carries a fail-closed
+  # `find -type l` backstop right after extraction. The approve flow can't run in
+  # CI (needs a live PR + comment), so this job locks the guard's presence in
+  # source AND replays it behaviorally against a planted symlink.
+  approve-symlink-backstop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Symlink backstop is present in the apply step (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The literal '$BASELINES_PATH' is the string we grep for in source, so
+          # the single quotes below are intentional (SC2016).
+          # shellcheck disable=SC2016
+          if ! grep -Fq 'find "$BASELINES_PATH" -type l' approve/action.yml; then
+            echo "approve/action.yml is missing the fail-closed symlink backstop after seeding." >&2
+            exit 1
+          fi
+
+      - name: Backstop refuses a symlinked seeded tree (behavioral, both directions)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Mirrors the apply-step guard exactly: a symlink materialized under
+          # baselines must fail closed the moment the head tree is extracted.
+          guard() { # $1 = the seeded baselines dir under test
+            if find "$1" -type l | grep -q .; then
+              echo "Refusing symlink in seeded baselines" >&2
+              return 1
+            fi
+            return 0
+          }
+
+          # Direction 1 — a clean seeded tree of regular files passes.
+          clean="$(mktemp -d)"
+          mkdir -p "$clean/visit-home"
+          printf 'x' > "$clean/visit-home/0.png"
+          if ! guard "$clean"; then
+            echo "FAIL: clean seeded baselines were rejected" >&2; exit 1
+          fi
+
+          # Direction 2 — a tree carrying a symlink (as `git archive | tar -x`
+          # would recreate from a malicious head commit) must be refused.
+          evil="$(mktemp -d)"
+          mkdir -p "$evil/visit-home"
+          printf 'x' > "$evil/visit-home/0.png"
+          ln -s /etc/passwd "$evil/visit-home/leak.png"
+          if guard "$evil"; then
+            echo "FAIL: seeded baselines carrying a symlink were accepted" >&2; exit 1
+          fi
+
+          echo "symlink-backstop: clean tree passes, symlinked tree refused."

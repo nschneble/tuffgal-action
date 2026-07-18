@@ -140,3 +140,69 @@ test('walk: collects nested files from a temp tree', () => {
 test('walk: missing directory yields an empty list', () => {
   assert.deepStrictEqual(walk('/nonexistent/path/should/not/exist', fs), []);
 });
+
+// --- walk symlink refusal (T2 HIGH security lock) ------------------------ //
+// The tree walk runs over baselines materialized from the UNTRUSTED PR head.
+// A symlink committed there (e.g. leak.png -> /proc/self/environ) would, if
+// followed, get its TARGET's bytes blobbed onto the PR branch — secret exfil.
+// walk() MUST refuse symlinks fail-closed. These cases pin the invariant in
+// BOTH directions and MUST fail if the lstat/reject is reverted to statSync:
+//   - symlink-to-file under statSync collects as a plain file (no throw)
+//   - symlink-to-dir under statSync recurses into the target (no throw)
+
+const mkTmp = (tag) =>
+  fs.mkdtempSync(path.join(process.env.RUNNER_TEMP || os.tmpdir(), tag));
+
+test('walk: refuses a symlink to a file fail-closed', () => {
+  const root = mkTmp('bt-symfile-');
+  try {
+    fs.writeFileSync(path.join(root, 'real.png'), 'x');
+    fs.symlinkSync(path.join(root, 'real.png'), path.join(root, 'leak.png'));
+    assert.throws(() => walk(root, fs), /Refusing symlink/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('walk: refuses a symlink to a directory fail-closed', () => {
+  const root = mkTmp('bt-symdir-');
+  try {
+    fs.mkdirSync(path.join(root, 'realdir'));
+    fs.writeFileSync(path.join(root, 'realdir', '0.png'), 'x');
+    fs.symlinkSync(path.join(root, 'realdir'), path.join(root, 'linkdir'), 'dir');
+    assert.throws(() => walk(root, fs), /Refusing symlink/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('walk: refuses a symlink escaping the baselines dir (attack shape)', () => {
+  const root = mkTmp('bt-symescape-');
+  try {
+    // The concrete attack: a link whose target is a secret outside the tree.
+    fs.symlinkSync('/etc/passwd', path.join(root, 'leak.png'));
+    assert.throws(() => walk(root, fs), /Refusing symlink/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('walk: regular files pass; adding a symlink to that same tree refuses it', () => {
+  // Direction 1 — a clean tree of regular files is collected as before.
+  const clean = mkTmp('bt-clean-');
+  try {
+    fs.writeFileSync(path.join(clean, 'a.png'), 'x');
+    assert.deepStrictEqual(walk(clean, fs), [path.join(clean, 'a.png')]);
+  } finally {
+    fs.rmSync(clean, { recursive: true, force: true });
+  }
+  // Direction 2 — the identical shape plus one symlink is refused fail-closed.
+  const dirty = mkTmp('bt-dirty-');
+  try {
+    fs.writeFileSync(path.join(dirty, 'a.png'), 'x');
+    fs.symlinkSync('/etc/passwd', path.join(dirty, 'leak.png'));
+    assert.throws(() => walk(dirty, fs), /Refusing symlink/);
+  } finally {
+    fs.rmSync(dirty, { recursive: true, force: true });
+  }
+});

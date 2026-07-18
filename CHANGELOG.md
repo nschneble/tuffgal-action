@@ -6,6 +6,10 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+### Security
+
+- `approve` now refuses symlinks in the PR head's seeded baselines fail-closed, in two independent layers — a `find -type l` backstop the moment the head tree is materialized and an `lstatSync` reject in the commit step's file walk. Previously a write collaborator could commit `baselines/x.png -> ../../.npmrc` (or `/proc/self/environ`) on a same-repo PR and have `@tuffgal approve` read the symlink target and commit its bytes — the job token — back onto the branch
+
 ### Changed
 
 - `approve` commit step's pure logic (path guard, file walk, deletions set-difference) extracted into a committed, unit-tested `approve/scripts/baseline-tree.js` module, with a `node --test` CI job — the security-sensitive tree math is now covered without a live GitHub run

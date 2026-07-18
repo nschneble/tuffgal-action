@@ -384,6 +384,21 @@ runs:
           git archive "$HEAD_SHA" -- "$BASELINES_PATH" | tar -x
         fi
 
+        # Belt-and-suspenders symlink refusal. The head tree is UNTRUSTED (a
+        # write collaborator controls its committed contents) and the extraction
+        # above faithfully recreates any symlink committed under baselines. The
+        # downstream commit step reads each file's bytes to blob them, so a
+        # symlink pointing at a secret (../../.npmrc, /proc/self/environ) would
+        # exfiltrate the target onto the PR branch. Refuse fail-closed the moment
+        # the tree is materialized, before the CLI runs — mirrors
+        # validate-artifact.sh pass 1 for the sibling untrusted input. The
+        # commit step's walk() enforces the same invariant in Node; this is the
+        # earlier, independent layer. (Locked by ci.yml approve-symlink-backstop.)
+        if find "$BASELINES_PATH" -type l | grep -q .; then
+          echo "Refusing symlink in seeded baselines" >&2
+          exit 1
+        fi
+
         # CLI owns baseline promotion, prune, and manifest.json.
         npx tuffgal approve --from "$CAND_DIR" --prune
 

@@ -33,15 +33,28 @@ function guard(p, prefix) {
 // Recursively collect every regular file under `dir`, returning absolute paths.
 // `fs` is injected so the walk can run against a temp tree in tests.
 //
-// NOTE: uses `fs.statSync` (follows symlinks) deliberately — this wave is
-// behavior-preserving. Hardening the walk against symlinked directories with
-// `lstatSync` is a separate, tracked change; do NOT switch it here.
+// SECURITY: uses `fs.lstatSync` (does NOT follow symlinks) and REJECTS any
+// symlink fail-closed by throwing. The tree walked here is materialized from the
+// PR head via `git archive | tar -x` — UNTRUSTED input a write collaborator
+// controls, and `git archive` faithfully recreates any symlink committed in it.
+// The caller blobs each returned file's bytes via `fs.readFileSync` (which
+// dereferences), so a followed symlink would commit the TARGET's bytes (e.g.
+// `../../.npmrc`, `/proc/self/environ` holding the job token) onto the PR branch
+// where the author reads them — write access → secret disclosure. So a symlink
+// is refused outright: never followed, never silently skipped. `lstatSync` is
+// load-bearing here — `statSync` would report a symlink-to-dir as a directory
+// (recursing into the target) and a symlink-to-file as a plain file (blobbing
+// the target). Mirrors `validate-artifact.sh`'s fail-closed posture for the
+// sibling untrusted input (the candidates artifact).
 function walk(dir, fs) {
   const out = [];
   if (!fs.existsSync(dir)) return out;
   for (const name of fs.readdirSync(dir)) {
     const full = path.join(dir, name);
-    const st = fs.statSync(full);
+    const st = fs.lstatSync(full);
+    if (st.isSymbolicLink()) {
+      throw new Error(`Refusing symlink in baselines: ${full}`);
+    }
     if (st.isDirectory()) out.push(...walk(full, fs));
     else out.push(full);
   }
