@@ -16,6 +16,7 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 - `approve` no longer deletes unchanged baselines for consumers whose `working-directory` is a subdirectory — the head-baseline seed guard was repo-root-relative while `baselines-path` is working-directory-relative, so the seed silently skipped and prune removed every untouched baseline
 - A malformed `results.json` (empty, truncated, or not a JSON object) now maps to `no-results` instead of crashing the parse step on a `jq` parse error and leaking unset outputs to the downstream `always()` steps
 - `approve` preflight no longer points consumers at a nonexistent tuffgal "v2" — its comments and the posted failure message now reference the real `>= 0.2.0-alpha.1` requirement
+- The per-PR Pages preview no longer degrades to artifact links when two PRs' visual runs overlap — a push rejected non-fast-forward now re-syncs the shared branch tip, re-applies only this PR's subtree, and retries, while a genuine permission failure still falls straight to the fallback
 
 ### Security
 
