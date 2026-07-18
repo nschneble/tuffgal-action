@@ -10,7 +10,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Lint workflows
         uses: reviewdog/action-actionlint@6fb7acc99f4a1008869fa8a0f09cfca740837d9d # v1.72.0
         with:
@@ -38,7 +38,7 @@ jobs:
   validate-artifact:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Reject malicious + accept clean artifacts
         shell: bash
         run: |
@@ -105,7 +105,7 @@ jobs:
   approve-scripts-unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Pin an explicit Node so the node:test stable-API floor is guaranteed
       # rather than inherited from the runner's default (which can lag).
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -130,7 +130,7 @@ jobs:
   approve-require-source-lock:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Approve-step requires resolve via the composite action path (source lock)
         shell: bash
         run: |
@@ -169,7 +169,7 @@ jobs:
   pages-push-retry-unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Pin an explicit Node so the node:test stable-API floor is guaranteed
       # rather than inherited from the runner's default (which can lag).
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -191,7 +191,7 @@ jobs:
   pages-push-require-source-lock:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Pages step require resolves via the composite action path (source lock)
         shell: bash
         run: |
@@ -219,7 +219,7 @@ jobs:
   smoke-pass:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: ./
         id: tuffgal
@@ -249,7 +249,7 @@ jobs:
   smoke-changed-new:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Remove the committed baseline so the story has no baseline to compare
       # against — CI mode reports it as `new` and writes a candidate.
@@ -295,7 +295,7 @@ jobs:
   smoke-changed-drift:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Keep the committed baseline but change the rendered page so the compare
       # drifts — exercises the genuine `changed` path, not just missing-baseline.
@@ -335,7 +335,7 @@ jobs:
   smoke-deleted:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Add an orphan baseline with no matching story/action so CI mode reports
       # it as `deleted`. The committed visit-home baseline still passes.
@@ -382,7 +382,7 @@ jobs:
   smoke-env-mismatch:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Doctor the committed manifest so its recorded platform (darwin) no
       # longer matches this Linux runner. Only `platform` is rewritten — the
@@ -435,7 +435,7 @@ jobs:
   smoke-fail-on-changed-default:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # A pending change must FAIL the job under the new default (fail-on-changed
       # defaults to true) — the headline breaking change of v1.
@@ -475,7 +475,7 @@ jobs:
   approve-subdir-frame:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Seed guard is cwd-relative (source lock)
         shell: bash
@@ -573,7 +573,7 @@ jobs:
   approve-symlink-backstop:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Symlink backstop is present in the apply step (source lock)
         shell: bash
@@ -631,7 +631,7 @@ jobs:
   parse-malformed-results:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Parse step validates results.json before parsing (source lock)
         shell: bash
