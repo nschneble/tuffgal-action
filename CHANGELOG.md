@@ -6,38 +6,39 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+_Nothing just yet_
+
+## [v1.3.0] - 2026-07-18
+
 ### Added
 
-- security policy (`SECURITY.md`) routing vulnerability reports to GitHub's private vulnerability reporting
+- Security policy routing vulnerability reports to GitHub's private vulnerability reporting
 
 ### Changed
 
-- `approve` commit-step logic extracted into a unit-tested `baseline-tree.js` module
-- `approve` gate resolver and candidate selection extracted into unit-tested `resolve-approver.js` and `select-candidate.js` modules
-- sticky PR-comment body building extracted into a unit-tested `build-comment.js` module
-- the `Run Tuffgal` harness step now runs under `set -euo pipefail`, like every other bash block
+- `approve` commit-step logic extracted into a unit-tested module
+- `approve` gate resolver and candidate selection extracted into unit-tested modules
+- `approve` refuses symlinks in the PR head's seeded baselines
 - CI now exercises the `failed` / `no-results` exit-code legs and the artifact validator's backslash-path rejection
-- input declarations are alphabetized across `action.yml`, `approve/action.yml`, and the README input table
-- the primary `visual-regression` usage workflow now ships as a linted `examples/tuffgal.yml`, covered by the existing `actionlint examples/*.yml` step
+- Every third-party action is SHA-pinned, with a Dependabot config keeping the pins fresh
+- Input declarations are alphabetized across `action.yml`, `approve/action.yml`, and the README input table
+- Per-PR Pages preview masks its push token and redacts it from git error logs
+- Primary `visual-regression` usage workflow now ships as a linted `examples/tuffgal.yml`
+- Sticky PR-comment body building extracted into a unit-tested module
+- The `Run Tuffgal` harness step now runs under `set -euo pipefail`
 
 ### Fixed
 
-- `approve` no longer wipes unchanged baselines when `working-directory` is a subdirectory
-- PR-comment thumbnails now name their story in the alt text, giving screen-reader users per-image context
-- the step-summary and PR-comment env-mismatch banners now share one wording, so the two surfaces can't drift
-- `no-results` and `failed` PR comments now name the concrete next step instead of dropping to a bare run link
-- PR-comment image `src` URLs are now attribute-escaped, matching the alt text
-- `approve` preflight points at the real `>= 0.2.0-alpha.1` requirement, not a nonexistent "v2"
+- `approve` no longer wipes unchanged baselines when working directory is a subdirectory
+- `approve` preflight points at the real version requirement
 - Malformed `results.json` now reports `no-results` instead of crashing the parse step
+- `no-results` and `failed` PR comments now name the concrete next step instead of dropping to a bare run link
 - Per-PR Pages preview survives overlapping visual runs (the push retries instead of dropping to artifact links)
-- Per-PR Pages preview logs expected degradation (no `contents: write`, Pages not enabled) as a notice instead of a warning, reserving warnings for genuinely unexpected failures
-- README now notes the `retention-days` unit (days), matches the `deleted` output's "no matching story/action" wording, documents the approve `git-user-name` / `git-user-email` inputs, and the approve checkbox example accepts a manually-typed `[X]`
-
-### Security
-
-- Per-PR Pages preview masks its push token and redacts it from git error logs, so a custom `pages-token` can't leak in cleartext on a push failure
-- `approve` refuses symlinks in the PR head's seeded baselines, fail-closed
-- Every third-party action is SHA-pinned, with a Dependabot config keeping the pins fresh
+- Per-PR Pages preview logs expected degradation as a notice instead of a warning
+- PR-comment thumbnails now name their story in the alt text, giving screen-reader users per-image context
+- PR-comment image `src` URLs are now attribute-escaped
+- README now notes the `retention-days` unit, matches the `deleted` output's wording, documents the approve inputs, and the approve checkbox example accepts a manually-typed `[X]`
+- Step-summary and PR-comment env-mismatch banners now share one wording
 
 ## [v1.2.1] - 2026-07-16
 
@@ -184,7 +185,8 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.3.0...HEAD
+[v1.3.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.3.0
 [v1.2.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.2.1
 [v1.2.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.2.0
 [v1.1.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.1.0
