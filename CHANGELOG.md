@@ -14,9 +14,9 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 ### Fixed
 
 - `approve` no longer wipes unchanged baselines when `working-directory` is a subdirectory
-- Malformed `results.json` now reports `no-results` instead of crashing the parse step
 - `approve` preflight points at the real `>= 0.2.0-alpha.1` requirement, not a nonexistent "v2"
-- Per-PR Pages preview survives overlapping visual runs — the push retries instead of dropping to artifact links
+- Malformed `results.json` now reports `no-results` instead of crashing the parse step
+- Per-PR Pages preview survives overlapping visual runs (the push retries instead of dropping to artifact links)
 
 ### Security
 
