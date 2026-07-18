@@ -312,7 +312,7 @@ runs:
     - name: Publish per-PR preview to GitHub Pages
       id: pages
       if: always() && github.event_name == 'pull_request' && inputs.pages-preview == 'true' && steps.outcome.outputs.pending == 'true'
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         TUFFGAL_REPORT_PATH: ${{ inputs.report-path }}
         TUFFGAL_BASELINES_PATH: ${{ inputs.baselines-path }}
@@ -476,7 +476,7 @@ runs:
 
     - name: Post sticky PR comment
       if: always() && github.event_name == 'pull_request'
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         TUFFGAL_REPORT_PATH: ${{ inputs.report-path }}
         TUFFGAL_BASELINES_PATH: ${{ inputs.baselines-path }}
