@@ -6,6 +6,10 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+### Added
+
+- security policy (`SECURITY.md`) routing vulnerability reports to GitHub's private vulnerability reporting
+
 ### Changed
 
 - `approve` commit-step logic extracted into a unit-tested `baseline-tree.js` module
