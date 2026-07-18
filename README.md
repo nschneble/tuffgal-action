@@ -257,6 +257,11 @@ by hand.
 - It writes **only** files from the candidates artifact, path-scoped to the
   baselines directory. Absolute paths, path traversal, or unexpected file
   types in the artifact fail the job closed.
+- It reads the PR head's existing baselines as data, but **refuses any symlink
+  among them fail-closed** — a write collaborator could otherwise commit
+  `baselines/x.png -> ../../.npmrc` (or `/proc/self/environ`), and following it
+  would blob the secret target's bytes back onto the branch. A symlink there
+  fails the job closed.
 - The comment body is never interpolated into a shell command.
 
 ### Implicit: download and approve locally

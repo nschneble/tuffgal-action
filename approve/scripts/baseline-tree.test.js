@@ -1,7 +1,7 @@
 'use strict';
 //
 // Unit tests for the pure baseline-tree logic. No deps beyond Node's built-in
-// `node:test` + `node:assert` — run with `node --test approve/scripts/`.
+// `node:test` + `node:assert` — run with `node --test approve/scripts/*.test.js`.
 //
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -9,7 +9,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { guard, walk, toRepoPath, computeDeletions } = require('./baseline-tree.js');
+const {
+  BaselineScopeError,
+  guard,
+  walk,
+  toRepoPath,
+  deriveFrames,
+  computeDeletions,
+} = require('./baseline-tree.js');
 
 // --- guard --------------------------------------------------------------- //
 
@@ -56,7 +63,63 @@ test('guard: normalizes backslashes before checking', () => {
   );
 });
 
-// --- frame correctness (T1 unit lock) ------------------------------------ //
+// --- guard scope rejections are a tagged type ---------------------------- //
+// The commit step's `atHead` ls-tree catch swallows the genuine "no tree at
+// head" bootstrap error but MUST re-throw a scope rejection. That fail-closed
+// posture depends on the rejection being a distinguishable type, not on where
+// the catch sits — so pin the type here. Reverting guard's throws back to a
+// bare `Error` makes these fail.
+test('guard: scope rejections throw the tagged BaselineScopeError type', () => {
+  assert.throws(() => guard('/etc/passwd', 'tuffgal/baselines'), BaselineScopeError);
+  assert.throws(
+    () => guard('tuffgal/baselines/../../etc/passwd', 'tuffgal/baselines'),
+    BaselineScopeError,
+  );
+  assert.throws(() => guard('some/other/dir/0.png', 'tuffgal/baselines'), BaselineScopeError);
+});
+
+test('guard: a BaselineScopeError is still an Error (instanceof both)', () => {
+  try {
+    guard('/etc/passwd', 'tuffgal/baselines');
+    assert.fail('expected guard to throw');
+  } catch (e) {
+    assert.ok(e instanceof BaselineScopeError);
+    assert.ok(e instanceof Error);
+    assert.strictEqual(e.name, 'BaselineScopeError');
+  }
+});
+
+// --- deriveFrames -------------------------------------------------------- //
+// The commit step derives its three baseline-path frames from the raw
+// working-directory + baselines-path inputs. This was inline and untested; a
+// bug here (trailing slash, the '.' case, backslashes) is a frame bug invisible
+// to the rest of the suite, which hardcoded workdirPrefix.
+
+test("deriveFrames: '.' working-directory yields an empty prefix", () => {
+  assert.deepStrictEqual(deriveFrames('.', 'tuffgal/baselines'), {
+    workdirPrefix: '',
+    baselinesRelPosix: 'tuffgal/baselines',
+    prefix: 'tuffgal/baselines',
+  });
+});
+
+test('deriveFrames: subdir working-directory re-anchors the prefix to repo root', () => {
+  assert.deepStrictEqual(deriveFrames('frontend', 'tuffgal/baselines'), {
+    workdirPrefix: 'frontend',
+    baselinesRelPosix: 'tuffgal/baselines',
+    prefix: 'frontend/tuffgal/baselines',
+  });
+});
+
+test('deriveFrames: a trailing slash on working-directory is normalized away', () => {
+  assert.deepStrictEqual(deriveFrames('frontend/', 'tuffgal/baselines'), {
+    workdirPrefix: 'frontend',
+    baselinesRelPosix: 'tuffgal/baselines',
+    prefix: 'frontend/tuffgal/baselines',
+  });
+});
+
+// --- frame correctness --------------------------------------------------- //
 // Prove deletions are computed correctly under BOTH a '.' working-directory
 // (empty prefix) and a subdir working-directory. This locks the same invariant
 // the `approve-subdir-frame` smoke job covers, but at the unit level.
@@ -70,8 +133,8 @@ test("frame: '.' working-directory anchors and computes deletions correctly", ()
     'tuffgal/baselines/visit-home/desktop.png',
     'tuffgal/baselines/old-story/desktop.png',
   ];
-  const onDisk = onDiskNames.map((n) => toRepoPath(n, workdirPrefix, prefix));
-  const atHead = atHeadNames.map((n) => toRepoPath(n, workdirPrefix, prefix));
+  const onDisk = onDiskNames.map((name) => toRepoPath(name, workdirPrefix, prefix));
+  const atHead = atHeadNames.map((name) => toRepoPath(name, workdirPrefix, prefix));
   assert.deepStrictEqual(onDisk, ['tuffgal/baselines/visit-home/desktop.png']);
   assert.deepStrictEqual(computeDeletions(onDisk, atHead), [
     'tuffgal/baselines/old-story/desktop.png',
@@ -88,8 +151,8 @@ test('frame: subdir working-directory re-anchors to repo root and computes delet
     'tuffgal/baselines/visit-home/desktop.png',
     'tuffgal/baselines/removed/desktop.png',
   ];
-  const onDisk = onDiskNames.map((n) => toRepoPath(n, workdirPrefix, prefix));
-  const atHead = atHeadNames.map((n) => toRepoPath(n, workdirPrefix, prefix));
+  const onDisk = onDiskNames.map((name) => toRepoPath(name, workdirPrefix, prefix));
+  const atHead = atHeadNames.map((name) => toRepoPath(name, workdirPrefix, prefix));
   assert.deepStrictEqual(onDisk, ['frontend/tuffgal/baselines/visit-home/desktop.png']);
   assert.deepStrictEqual(computeDeletions(onDisk, atHead), [
     'frontend/tuffgal/baselines/removed/desktop.png',
@@ -99,7 +162,7 @@ test('frame: subdir working-directory re-anchors to repo root and computes delet
 // --- deletions math ------------------------------------------------------ //
 
 test('deletions: atHead 50, onDisk 1 overlapping -> 49 deletions', () => {
-  const atHead = Array.from({ length: 50 }, (_, i) => `tuffgal/baselines/s${i}/0.png`);
+  const atHead = Array.from({ length: 50 }, (_, index) => `tuffgal/baselines/s${index}/0.png`);
   const onDisk = ['tuffgal/baselines/s0/0.png']; // overlaps the first
   const deletions = computeDeletions(onDisk, atHead);
   assert.strictEqual(deletions.length, 49);
@@ -141,7 +204,7 @@ test('walk: missing directory yields an empty list', () => {
   assert.deepStrictEqual(walk('/nonexistent/path/should/not/exist', fs), []);
 });
 
-// --- walk symlink refusal (T2 HIGH security lock) ------------------------ //
+// --- walk symlink refusal ------------------------------------------------ //
 // The tree walk runs over baselines materialized from the UNTRUSTED PR head.
 // A symlink committed there (e.g. leak.png -> /proc/self/environ) would, if
 // followed, get its TARGET's bytes blobbed onto the PR branch — secret exfil.

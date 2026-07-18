@@ -9,23 +9,38 @@
 // This module owns ONLY the pure pieces. The thin GitHub API calls
 // (createBlob / createTree / createCommit / updateRef) and the `git ls-tree`
 // execFileSync stay inline in action.yml; the inline script requires this module
-// and calls these functions. Behavior is byte-identical to the previous inline
-// implementation.
+// and calls these functions. `guard`, `toRepoPath`, `computeDeletions`, and
+// `deriveFrames` reproduce the previous inline logic byte-for-byte; `walk`
+// additionally rejects symlinks fail-closed (a deliberate divergence — see its
+// SECURITY note).
 //
 const path = require('path');
+
+// Tagged error type for a baselines-scope rejection thrown by `guard`. Callers
+// that swallow expected errors (e.g. the commit step's `atHead` ls-tree catch,
+// which treats a missing head tree as bootstrap) MUST re-throw this so a scope
+// violation on any path can never be silently swallowed into a fail-open — the
+// fail-closed posture is a property of the error type, not of catch placement.
+class BaselineScopeError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'BaselineScopeError';
+  }
+}
 
 // Reject any path that would escape the baselines scope. `prefix` is the
 // repo-root-relative baselines directory (e.g. `tuffgal/baselines`, or
 // `frontend/tuffgal/baselines` for a subdir working-directory). Rejects absolute
 // paths and `..` traversal segments outright, then requires the path to be the
 // prefix itself or nested under it. Returns the forward-slash-normalized path.
-function guard(p, prefix) {
-  const norm = p.replace(/\\/g, '/');
+// Throws `BaselineScopeError` on any rejection.
+function guard(candidatePath, prefix) {
+  const norm = candidatePath.replace(/\\/g, '/');
   if (norm.startsWith('/') || norm.split('/').includes('..')) {
-    throw new Error(`Refusing out-of-scope path: ${p}`);
+    throw new BaselineScopeError(`Refusing out-of-scope path: ${candidatePath}`);
   }
   if (!(norm === prefix || norm.startsWith(prefix + '/'))) {
-    throw new Error(`Refusing path outside baselines directory: ${p}`);
+    throw new BaselineScopeError(`Refusing path outside baselines directory: ${candidatePath}`);
   }
   return norm;
 }
@@ -70,12 +85,36 @@ function toRepoPath(name, workdirPrefix, prefix) {
   return guard(path.posix.join(workdirPrefix, name), prefix);
 }
 
+// Derive the three baseline-path frames the commit step needs from the raw
+// `working-directory` and (working-directory-relative) `baselines-path` inputs:
+//   - workdirPrefix:     repo-root-relative working-directory ('' for '.'),
+//                        used to re-anchor walk/ls-tree names to the repo root
+//   - baselinesRelPosix: working-directory-relative baselines dir (for git
+//                        pathspecs, which git resolves against the process cwd)
+//   - prefix:            repo-root-relative baselines dir (for tree entries and
+//                        the guard)
+// Normalizes backslashes and trailing slashes so a `working-directory: frontend/`
+// (trailing slash) and the `'.'` case both resolve correctly.
+function deriveFrames(workdir, baselinesRel) {
+  const workdirPrefix = workdir === '.' ? '' : workdir.replace(/\\/g, '/').replace(/\/$/, '');
+  const baselinesRelPosix = baselinesRel.replace(/\\/g, '/').replace(/\/$/, '');
+  const prefix = path.posix.join(workdirPrefix, baselinesRelPosix).replace(/\/$/, '');
+  return { workdirPrefix, baselinesRelPosix, prefix };
+}
+
 // Deletions = files present at the head commit but no longer on disk after the
 // approve (atHead \ onDisk). Both inputs are already repo-root-anchored,
 // guarded paths. Bootstrap (empty atHead) and an unchanged set both yield [].
 function computeDeletions(onDiskRepoPaths, atHeadRepoPaths) {
   const onDiskSet = new Set(onDiskRepoPaths);
-  return atHeadRepoPaths.filter((p) => !onDiskSet.has(p));
+  return atHeadRepoPaths.filter((repoPath) => !onDiskSet.has(repoPath));
 }
 
-module.exports = { guard, walk, toRepoPath, computeDeletions };
+module.exports = {
+  BaselineScopeError,
+  guard,
+  walk,
+  toRepoPath,
+  deriveFrames,
+  computeDeletions,
+};

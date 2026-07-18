@@ -86,20 +86,59 @@ jobs:
           echo "validator: all cases passed"
 
   # Unit test for the approve commit step's PURE logic — path guard, file walk,
-  # and the deletions set-difference — extracted into approve/scripts/
-  # baseline-tree.js. No live GitHub run needed; no deps beyond Node's built-in
-  # node:test + node:assert. Also unit-locks T1's subdir-frame correctness
-  # alongside the approve-subdir-frame smoke job below.
-  baseline-tree-unit:
+  # frame derivation, and the deletions set-difference — extracted into
+  # approve/scripts/baseline-tree.js. No live GitHub run needed; no deps beyond
+  # Node's built-in node:test + node:assert. Also unit-locks the subdir-frame
+  # correctness alongside the approve-subdir-frame smoke job below.
+  approve-baseline-tree-unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Pin an explicit Node so the node:test stable-API floor is guaranteed
+      # rather than inherited from the runner's default (which can lag).
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - name: Run baseline-tree unit tests
         shell: bash
         run: node --test approve/scripts/*.test.js
+
+  # Source lock for the module require inside the nested github-script commit
+  # step. `github.action_path` is only supported in composite actions; inside a
+  # nested github-script step `GITHUB_ACTION_PATH` points at github-script's OWN
+  # action dir, not this composite's — so requiring the module via
+  # `GITHUB_ACTION_PATH` resolves to a nonexistent path and crashes the commit
+  # step at runtime. The comment-gated approve flow can't run in CI, so this job
+  # locks the documented-correct idiom in source: the composite passes its
+  # `github.action_path` through the step env as ACTION_PATH and the script
+  # requires from that.
+  approve-require-source-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Commit-step require resolves via the composite action path (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The composite must expose its own dir as ACTION_PATH...
+          # shellcheck disable=SC2016
+          if ! grep -Fq 'ACTION_PATH: ${{ github.action_path }}' approve/action.yml; then
+            echo "approve/action.yml commit step must pass github.action_path through the ACTION_PATH step env." >&2
+            exit 1
+          fi
+          # ...and the script must require the module from ACTION_PATH.
+          # shellcheck disable=SC2016
+          if ! grep -Fq 'require(`${process.env.ACTION_PATH}/scripts/baseline-tree.js`)' approve/action.yml; then
+            echo "approve/action.yml commit step must require baseline-tree.js via process.env.ACTION_PATH." >&2
+            exit 1
+          fi
+          # The broken bare-GITHUB_ACTION_PATH require (wrong dir inside a nested
+          # github-script step) must NOT reappear.
+          # shellcheck disable=SC2016
+          if grep -Fq 'process.env.GITHUB_ACTION_PATH}/scripts/baseline-tree.js' approve/action.yml; then
+            echo "approve/action.yml reintroduced the GITHUB_ACTION_PATH require, which resolves to github-script's own dir inside the nested step." >&2
+            exit 1
+          fi
 
   smoke-pass:
     runs-on: ubuntu-latest
@@ -350,7 +389,7 @@ jobs:
             exit 1
           fi
 
-  # Regression lock for the subdir baseline-deletion bug (T1). The approve flow
+  # Regression lock for the subdir baseline-deletion bug. The approve flow
   # can't run in CI (it needs a live PR + comment), and every smoke job above
   # runs from working-directory: '.', so the frame mismatch escaped review. This
   # job proves the underlying invariant directly: from a non-'.' working-
@@ -447,7 +486,7 @@ jobs:
 
           echo "subdir-frame: OLD guard skips the seed, NEW guard seeds, default '.' unaffected."
 
-  # Security lock for the seeded-baselines symlink-follow vector (T2, HIGH). The
+  # Security lock for the seeded-baselines symlink-follow vector. The
   # PR head tree is untrusted (a write collaborator controls it) and `git archive
   # | tar -x` recreates any symlink committed under baselines; the commit step
   # reads file bytes to blob them, so a followed symlink would exfiltrate its

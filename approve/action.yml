@@ -394,8 +394,9 @@ runs:
         # validate-artifact.sh pass 1 for the sibling untrusted input. The
         # commit step's walk() enforces the same invariant in Node; this is the
         # earlier, independent layer. (Locked by ci.yml approve-symlink-backstop.)
-        if find "$BASELINES_PATH" -type l | grep -q .; then
-          echo "Refusing symlink in seeded baselines" >&2
+        seeded_links="$(find "$BASELINES_PATH" -type l)"
+        if [ -n "$seeded_links" ]; then
+          echo "Refusing symlink in seeded baselines: $seeded_links" >&2
           exit 1
         fi
 
@@ -430,6 +431,13 @@ runs:
         # 'true'/'false' string from a GitHub-expression comparison; the token
         # value itself never reaches the environment or the logs.
         TOKEN_IS_DEFAULT: ${{ inputs.token == github.token }}
+        # This composite's own action dir. `github.action_path` is only supported
+        # in composite actions and is evaluated HERE in the composite's context;
+        # it is NOT the same as `GITHUB_ACTION_PATH` inside the nested github-
+        # script step below, which points at github-script's own action dir.
+        # The script requires baseline-tree.js from this path. (Source-locked by
+        # ci.yml approve-require-source-lock.)
+        ACTION_PATH: ${{ github.action_path }}
       with:
         github-token: ${{ inputs.token }}
         script: |
@@ -444,9 +452,9 @@ runs:
           // a committed, unit-tested module. The thin GitHub git-data API calls
           // (createBlob / createTree / createCommit / updateRef) and the
           // `git ls-tree` below stay inline. See the module header and the
-          // `baseline-tree-unit` CI job.
-          const { guard, walk, toRepoPath, computeDeletions } =
-            require(`${process.env.GITHUB_ACTION_PATH}/scripts/baseline-tree.js`);
+          // `approve-baseline-tree-unit` CI job.
+          const { walk, toRepoPath, computeDeletions, deriveFrames, BaselineScopeError } =
+            require(`${process.env.ACTION_PATH}/scripts/baseline-tree.js`);
 
           const workdir = process.env.WORKDIR || '.';
           const baselinesRel = process.env.BASELINES_PATH;              // working-directory-relative (matches the input contract)
@@ -456,10 +464,9 @@ runs:
 
           // Baselines prefix in two frames: repo-root-relative (for tree entries
           // and the guard) and working-directory-relative (for git pathspecs,
-          // which git resolves against the process cwd).
-          const workdirPrefix = workdir === '.' ? '' : workdir.replace(/\\/g, '/').replace(/\/$/, '');
-          const baselinesRelPosix = baselinesRel.replace(/\\/g, '/').replace(/\/$/, '');
-          const prefix = path.posix.join(workdirPrefix, baselinesRelPosix).replace(/\/$/, '');
+          // which git resolves against the process cwd). Derived + unit-tested in
+          // the module so the '.', subdir, and trailing-slash cases are locked.
+          const { workdirPrefix, baselinesRelPosix, prefix } = deriveFrames(workdir, baselinesRel);
 
           // Files currently on disk under baselines (post-approve desired state),
           // each re-anchored to the repo-root frame via toRepoPath so onDisk,
@@ -481,6 +488,10 @@ runs:
             atHead = listed.split('\n').map(s => s.trim()).filter(Boolean)
               .map(name => toRepoPath(name, workdirPrefix, prefix));
           } catch (e) {
+            // A scope rejection on a head-listed path is a security signal, not a
+            // bootstrap: re-throw it so it fail-closes. Only the genuine "no tree
+            // at head" ls-tree error is swallowed as bootstrap.
+            if (e instanceof BaselineScopeError) throw e;
             core.info(`No baselines at head (${e.message}); treating as bootstrap.`);
           }
 
