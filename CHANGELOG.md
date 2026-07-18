@@ -13,6 +13,8 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 - sticky PR-comment body building extracted into a unit-tested `build-comment.js` module
 - the `Run Tuffgal` harness step now runs under `set -euo pipefail`, like every other bash block
 - CI now exercises the `failed` / `no-results` exit-code legs and the artifact validator's backslash-path rejection
+- input declarations are alphabetized across `action.yml`, `approve/action.yml`, and the README input table
+- the primary `visual-regression` usage workflow now ships as a linted `examples/tuffgal.yml`, covered by the existing `actionlint examples/*.yml` step
 
 ### Fixed
 
@@ -24,6 +26,7 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 - Malformed `results.json` now reports `no-results` instead of crashing the parse step
 - Per-PR Pages preview survives overlapping visual runs (the push retries instead of dropping to artifact links)
 - Per-PR Pages preview logs expected degradation (no `contents: write`, Pages not enabled) as a notice instead of a warning, reserving warnings for genuinely unexpected failures
+- README now notes the `retention-days` unit (days), matches the `deleted` output's "no matching story/action" wording, documents the approve `git-user-name` / `git-user-email` inputs, and the approve checkbox example accepts a manually-typed `[X]`
 
 ### Security
 

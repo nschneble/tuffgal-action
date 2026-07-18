@@ -30,6 +30,10 @@ inputs:
     description: Node.js version for setup-node. Tuffgal requires Node 22+.
     required: false
     default: "22"
+  pages-branch:
+    description: Branch the per-PR preview is published to. Only used when pages-preview is true.
+    required: false
+    default: "gh-pages"
   pages-preview:
     description: >-
       Publish the report + baselines to a per-PR GitHub Pages preview
@@ -41,10 +45,6 @@ inputs:
       Pages is Enterprise-only). Set to false to skip.
     required: false
     default: "true"
-  pages-branch:
-    description: Branch the per-PR preview is published to. Only used when pages-preview is true.
-    required: false
-    default: "gh-pages"
   pages-token:
     description: >-
       Token used to push the preview branch AND to auto-enable Pages on the

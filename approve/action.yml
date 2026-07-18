@@ -14,34 +14,34 @@ branding:
   color: purple
 
 inputs:
-  baselines-path:
-    description: Path to the baselines directory (must match `paths.baselines` in tuffgal.config.ts). Commits are strictly scoped to this directory.
-    required: false
-    default: "tuffgal/baselines"
   artifact-name:
     description: Name of the candidates artifact to promote. Consumers with multiple visual jobs per run (matrix / smoke suites) set a unique name per job so approve knows which candidate set to promote; a run carrying more than one artifact with this name fails closed.
     required: false
     default: "tuffgal-candidates"
-  node-version:
-    description: Node.js version for setup-node. Tuffgal requires Node 22+.
+  baselines-path:
+    description: Path to the baselines directory (must match `paths.baselines` in tuffgal.config.ts). Commits are strictly scoped to this directory.
     required: false
-    default: "22"
-  working-directory:
-    description: Directory containing tuffgal.config.ts and package.json.
-    required: false
-    default: "."
-  git-user-name:
-    description: Name used for the baseline commit author/committer.
-    required: false
-    default: "tuffgal[bot]"
+    default: "tuffgal/baselines"
   git-user-email:
     description: Email used for the baseline commit author/committer.
     required: false
     default: "tuffgal-bot@users.noreply.github.com"
+  git-user-name:
+    description: Name used for the baseline commit author/committer.
+    required: false
+    default: "tuffgal[bot]"
+  node-version:
+    description: Node.js version for setup-node. Tuffgal requires Node 22+.
+    required: false
+    default: "22"
   token:
     description: Token for the baseline commit and updateRef. Defaults to `GITHUB_TOKEN`, which will not retrigger the visual check (GitHub's recursion prevention); supply a PAT or GitHub App installation token to have it re-run automatically. See the README approve section for the trade-off.
     required: false
     default: ${{ github.token }}
+  working-directory:
+    description: Directory containing tuffgal.config.ts and package.json.
+    required: false
+    default: "."
 
 runs:
   using: composite

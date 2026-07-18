@@ -1,0 +1,43 @@
+# Copy this into your consumer repo at .github/workflows/tuffgal.yml
+# It runs Tuffgal in CI mode on every pull request: proposes candidate
+# baselines, uploads the report, and posts the sticky review comment.
+#
+# This is the database-backed variant. For a static-site project that doesn't
+# need a database, drop the `services:` block and the `setup-script` input.
+name: visual-regression
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write # push the per-PR Pages preview to gh-pages
+  pull-requests: write # required for the sticky PR comment
+
+jobs:
+  tuffgal:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: myapp_testing_ui
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TUFFGAL: "1"
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/myapp_testing_ui
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: nschneble/tuffgal-action@v1
+        with:
+          setup-script: test:ui:setup

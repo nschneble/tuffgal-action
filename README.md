@@ -61,6 +61,8 @@ jobs:
           setup-script: test:ui:setup
 ```
 
+(Also available at [`examples/tuffgal.yml`](examples/tuffgal.yml).)
+
 For a static-site project that doesn't need a database, you can drop the
 `services:` block and the `setup-script` input.
 
@@ -110,11 +112,11 @@ contract the CI-owned-baselines model asks of a consumer.
 | `headed`            | `false`               | Run with `--headed` (rarely useful in CI)                                                                                                                                                                         |
 | `install-browsers`  | `true`                | Run `npx playwright install --with-deps chromium` before the harness                                                                                                                                              |
 | `node-version`      | `22`                  | Node.js version (Tuffgal requires Node 22+)                                                                                                                                                                       |
-| `pages-preview`     | `true`                | Publish the report + baselines to a per-PR GitHub Pages preview so the comment can deep-link to changed stories. Needs `contents: write` + Pages enabled; PUBLIC repos only; degrades to artifact links otherwise |
 | `pages-branch`      | `gh-pages`            | Branch the per-PR preview is published to (only used when `pages-preview` is on)                                                                                                                                  |
+| `pages-preview`     | `true`                | Publish the report + baselines to a per-PR GitHub Pages preview so the comment can deep-link to changed stories. Needs `contents: write` + Pages enabled; PUBLIC repos only; degrades to artifact links otherwise |
 | `pages-token`       | `${{ github.token }}` | Token to push the preview branch and auto-enable Pages. The default `GITHUB_TOKEN` pushes but can't create the Pages site (enable Pages once by hand); pass an admin PAT / App token to auto-enable it            |
 | `report-path`       | `tuffgal/report`      | Path to the report directory, relative to `working-directory` (must match `paths.report` in `tuffgal.config.ts`)                                                                                                  |
-| `retention-days`    | `14`                  | Artifact retention                                                                                                                                                                                                |
+| `retention-days`    | `14`                  | Artifact retention (days)                                                                                                                                                                                         |
 | `setup-script`      | `''`                  | Optional npm script to run before the harness (e.g. DB bootstrap)                                                                                                                                                 |
 | `story`             | `''`                  | Filter to a single story (`--story <name>`)                                                                                                                                                                       |
 | `upload-artifacts`  | `true`                | Upload the report + candidate baselines as workflow artifacts when visual changes await review                                                                                                                    |
@@ -125,7 +127,7 @@ contract the CI-owned-baselines model asks of a consumer.
 | Name           | Description                                                                                                                                                                    |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `changed`      | Number of stories whose committed baseline changed (pixels or a11y snapshot)                                                                                                   |
-| `deleted`      | Number of orphaned baseline entries with no matching story (pruned on approve)                                                                                                 |
+| `deleted`      | Number of orphaned baseline entries with no matching story/action (pruned on approve)                                                                                          |
 | `env-mismatch` | `'true'` when the capture environment in `baselines/manifest.json` no longer matches this CI run (expect a full re-approve)                                                    |
 | `failed`       | Number of stories that failed                                                                                                                                                  |
 | `new`          | Number of stories with no committed baseline yet (candidate written)                                                                                                           |
@@ -195,7 +197,8 @@ jobs:
         contains(github.event.comment.body, '@tuffgal approve') ||
         (github.event.action == 'edited' &&
          contains(github.event.comment.body, 'tuffgal-approve-box') &&
-         contains(github.event.comment.body, '[x] <!-- tuffgal-approve-box'))
+         (contains(github.event.comment.body, '[x] <!-- tuffgal-approve-box') ||
+          contains(github.event.comment.body, '[X] <!-- tuffgal-approve-box')))
       )
     runs-on: ubuntu-latest
     permissions:
@@ -206,8 +209,10 @@ jobs:
       - uses: nschneble/tuffgal-action/approve@v1
         with:
           working-directory: .
-          # baselines-path: tuffgal/baselines
           # artifact-name: tuffgal-candidates
+          # baselines-path: tuffgal/baselines
+          # git-user-email: tuffgal-bot@users.noreply.github.com
+          # git-user-name: tuffgal[bot]
           # node-version: "22"
           # token: ${{ secrets.TUFFGAL_APPROVE_TOKEN }}
 ```

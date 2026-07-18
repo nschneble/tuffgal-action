@@ -28,7 +28,8 @@ jobs:
         contains(github.event.comment.body, '@tuffgal approve') ||
         (github.event.action == 'edited' &&
          contains(github.event.comment.body, 'tuffgal-approve-box') &&
-         contains(github.event.comment.body, '[x] <!-- tuffgal-approve-box'))
+         (contains(github.event.comment.body, '[x] <!-- tuffgal-approve-box') ||
+          contains(github.event.comment.body, '[X] <!-- tuffgal-approve-box')))
       )
     runs-on: ubuntu-latest
     permissions:
@@ -39,7 +40,9 @@ jobs:
       - uses: nschneble/tuffgal-action/approve@v1
         with:
           working-directory: .
-          # baselines-path: tuffgal/baselines
           # artifact-name: tuffgal-candidates # set a unique name per visual job for matrix / smoke suites
+          # baselines-path: tuffgal/baselines
+          # git-user-email: tuffgal-bot@users.noreply.github.com
+          # git-user-name: tuffgal[bot]
           # node-version: "22"
           # token: ${{ secrets.TUFFGAL_APPROVE_TOKEN }}
