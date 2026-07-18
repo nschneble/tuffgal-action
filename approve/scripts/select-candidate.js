@@ -23,7 +23,7 @@
 // Order completed runs newest-first by `created_at`. Returns a new array; the
 // caller's paginated run list is not mutated.
 function sortRunsNewestFirst(runs) {
-  return [...runs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  return [...runs].sort((runA, runB) => new Date(runB.created_at) - new Date(runA.created_at));
 }
 
 // Classify one run's artifacts against the wanted name. Filters to entries that
@@ -32,7 +32,9 @@ function sortRunsNewestFirst(runs) {
 //   - 1 match    → { kind: 'selected', artifact }
 //   - >1 matches → { kind: 'ambiguous', count }     (caller fails closed)
 function classifyMatches(artifacts, artifactName) {
-  const matches = (artifacts || []).filter((a) => a.name === artifactName && !a.expired);
+  const matches = (artifacts || []).filter(
+    (artifact) => artifact.name === artifactName && !artifact.expired,
+  );
   if (matches.length === 0) {
     return { kind: 'none' };
   }

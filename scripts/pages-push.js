@@ -54,8 +54,8 @@ const RETRYABLE = [
 //   → false : terminal — fall straight to the artifact-link fallback
 function isRetryablePushError(output) {
   const text = String(output || '');
-  if (TERMINAL.some((re) => re.test(text))) return false;
-  return RETRYABLE.some((re) => re.test(text));
+  if (TERMINAL.some((pattern) => pattern.test(text))) return false;
+  return RETRYABLE.some((pattern) => pattern.test(text));
 }
 
 module.exports = { isRetryablePushError };

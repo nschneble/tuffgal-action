@@ -4,10 +4,10 @@
 // Node's built-in `node:test` + `node:assert` — run with
 // `node --test approve/scripts/*.test.js`.
 //
-// This is the who-can-approve trust boundary the original audit flagged as
-// entirely untested. The fail-closed arms (bot-authored edit ignored, unchecked
-// box no-op, non-PR no-op) are the security-load-bearing cases; they MUST fail if
-// the corresponding guard is reverted.
+// This is the who-can-approve trust boundary; before this suite it was entirely
+// untested. The fail-closed arms (bot-authored edit ignored, unchecked box no-op,
+// non-PR no-op) are the security-load-bearing cases; they MUST fail if the
+// corresponding guard is reverted.
 //
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -138,6 +138,28 @@ test('checkbox: a ticked box on a non-edited (created) event does NOT trigger', 
 
 test('checkbox: a ticked box missing the report marker does NOT trigger', () => {
   const body = '- [x] <!-- tuffgal-approve-box --> Approve';
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body, user: { login: 'tuffgal[bot]' } },
+    issue: prIssue,
+    contextActor: 'the-editor',
+  });
+  assert.strictEqual(result.proceed, false);
+  assert.strictEqual(result.reason, 'no-trigger');
+});
+
+// The report marker is present and a box is ticked, but the ticked box is NOT
+// the approve box (the approve box itself is unticked). This locks the
+// marker-ADJACENCY requirement: a fail-open refactor that checked for the report
+// marker plus any `[x]` separately — rather than a checked box immediately
+// bearing the approve-box marker — would wrongly proceed here.
+test('checkbox: a ticked unrelated box does NOT satisfy the approve box (fail closed)', () => {
+  const body = [
+    '<!-- tuffgal-report -->',
+    '- [x] some unrelated checkbox',
+    '- [ ] <!-- tuffgal-approve-box --> Approve these baselines',
+  ].join('\n');
   const result = resolveApprover({
     eventName: 'issue_comment',
     action: 'edited',

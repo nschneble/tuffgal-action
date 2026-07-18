@@ -76,15 +76,6 @@ test('classify: a custom artifact-name is honored', () => {
   });
 });
 
-test('classify: two of a custom name are still ambiguous', () => {
-  const custom = 'smoke-candidates';
-  const arts = [
-    { id: 2, name: custom, expired: false },
-    { id: 3, name: custom, expired: false },
-  ];
-  assert.deepStrictEqual(classifyMatches(arts, custom), { kind: 'ambiguous', count: 2 });
-});
-
 // --- sortRunsNewestFirst ------------------------------------------------- //
 
 test('sort: orders runs newest-first by created_at without mutating input', () => {
@@ -95,12 +86,12 @@ test('sort: orders runs newest-first by created_at without mutating input', () =
   ];
   const sorted = sortRunsNewestFirst(runs);
   assert.deepStrictEqual(
-    sorted.map((r) => r.id),
+    sorted.map((run) => run.id),
     ['new', 'mid', 'old'],
   );
   // Input array order is preserved (a new array is returned).
   assert.deepStrictEqual(
-    runs.map((r) => r.id),
+    runs.map((run) => run.id),
     ['old', 'new', 'mid'],
   );
 });

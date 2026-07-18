@@ -76,7 +76,7 @@ runs:
           // fail-closed early-outs (not a PR, neither trigger, bot-authored edit)
           // — lives in a committed, unit-tested module. The API-bound pieces
           // (reaction, permission lookup, fork decline) stay inline below. See
-          // resolve-approver.js and the approve-baseline-tree-unit CI job.
+          // resolve-approver.js and the approve-scripts-unit CI job.
           const { resolveApprover } = require(`${process.env.ACTION_PATH}/scripts/resolve-approver.js`);
           const { proceed, actor, reason } = resolveApprover({
             eventName: context.eventName,
@@ -464,7 +464,7 @@ runs:
           // a committed, unit-tested module. The thin GitHub git-data API calls
           // (createBlob / createTree / createCommit / updateRef) and the
           // `git ls-tree` below stay inline. See the module header and the
-          // `approve-baseline-tree-unit` CI job.
+          // `approve-scripts-unit` CI job.
           const { walk, toRepoPath, computeDeletions, deriveFrames, BaselineScopeError } =
             require(`${process.env.ACTION_PATH}/scripts/baseline-tree.js`);
 

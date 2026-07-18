@@ -8,31 +8,32 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ### Changed
 
-- `approve` commit step's pure logic (path guard, file walk, frame derivation, deletions set-difference) extracted into a unit-tested `approve/scripts/baseline-tree.js` module, covered by a `node --test` CI job
-- `approve` permission-gate trigger/actor resolution and fail-closed candidate-artifact selection extracted into unit-tested `approve/scripts/resolve-approver.js` and `select-candidate.js` modules, so the who-can-approve trust boundary and the ambiguity-fails-closed selection are covered by the same `node --test` CI job
+- `approve` commit-step logic extracted into a unit-tested `baseline-tree.js` module
+- `approve` gate resolver and candidate selection extracted into unit-tested `resolve-approver.js` and `select-candidate.js` modules
 
 ### Fixed
 
-- `approve` no longer deletes unchanged baselines for consumers whose `working-directory` is a subdirectory — the head-baseline seed guard was repo-root-relative while `baselines-path` is working-directory-relative, so the seed silently skipped and prune removed every untouched baseline
-- A malformed `results.json` (empty, truncated, or not a JSON object) now maps to `no-results` instead of crashing the parse step on a `jq` parse error and leaking unset outputs to the downstream `always()` steps
-- `approve` preflight no longer points consumers at a nonexistent tuffgal "v2" — its comments and the posted failure message now reference the real `>= 0.2.0-alpha.1` requirement
-- The per-PR Pages preview no longer degrades to artifact links when two PRs' visual runs overlap — a push rejected non-fast-forward now re-syncs the shared branch tip, re-applies only this PR's subtree, and retries, while a genuine permission failure still falls straight to the fallback
+- `approve` no longer wipes unchanged baselines when `working-directory` is a subdirectory
+- Malformed `results.json` now reports `no-results` instead of crashing the parse step
+- `approve` preflight points at the real `>= 0.2.0-alpha.1` requirement, not a nonexistent "v2"
+- Per-PR Pages preview survives overlapping visual runs — the push retries instead of dropping to artifact links
 
 ### Security
 
-- `approve` refuses symlinks in the PR head's seeded baselines fail-closed, so a symlink pointing at a secret can't be dereferenced and its bytes committed back onto the branch
-- Every third-party action is SHA-pinned (with a `# vX.Y.Z` comment) and the actionlint installer is pinned to a tagged release verified by SHA256, so a moved tag or hijacked upstream can't slip code into CI — a `github-actions` Dependabot config keeps the pins fresh
+- `approve` refuses symlinks in the PR head's seeded baselines, fail-closed
+- Every third-party action is SHA-pinned, with a Dependabot config keeping the pins fresh
 
 ## [v1.2.1] - 2026-07-16
 
 ### Added
 
 - `pages-token` input to auto-enable the per-PR Pages preview
+  - Pass an admin PAT / GitHub App token to have the first run create the Pages site; defaults to `GITHUB_TOKEN`
 
 ### Fixed
 
-- Docs no longer claim `GITHUB_TOKEN` + `pages: write` auto-enables Pages
-- The auto-enable warning now explains how to fix it
+- Docs no longer claim `GITHUB_TOKEN` + `pages: write` auto-enables Pages — GitHub reserves site creation for a repo-admin credential, so enable Pages once by hand or supply `pages-token`
+- The auto-enable warning now names the concrete fix (enable by hand, or set `pages-token`)
 
 ## [v1.2.0] - 2026-07-16
 

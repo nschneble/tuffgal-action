@@ -1,7 +1,11 @@
 'use strict';
-
+//
+// Unit tests for the pure retryable-vs-terminal push classifier. No deps beyond
+// Node's built-in `node:test` + `node:assert` — run with
+// `node --test scripts/*.test.js`.
+//
 const { test } = require('node:test');
-const assert = require('node:assert/strict');
+const assert = require('node:assert');
 
 const { isRetryablePushError } = require('./pages-push.js');
 
@@ -18,7 +22,7 @@ const NON_FAST_FORWARD = [
 ].join('\n');
 
 test('a non-fast-forward rejection is retryable', () => {
-  assert.equal(isRetryablePushError(NON_FAST_FORWARD), true);
+  assert.strictEqual(isRetryablePushError(NON_FAST_FORWARD), true);
 });
 
 test('a "fetch first" rejection is retryable', () => {
@@ -26,34 +30,34 @@ test('a "fetch first" rejection is retryable', () => {
     ' ! [rejected]        gh-pages -> gh-pages (fetch first)',
     "error: failed to push some refs to 'https://github.com/owner/repo.git'",
   ].join('\n');
-  assert.equal(isRetryablePushError(out), true);
+  assert.strictEqual(isRetryablePushError(out), true);
 });
 
 test('a lost ref compare-and-swap is retryable', () => {
   const out =
     "error: cannot lock ref 'refs/heads/gh-pages': is at 1111111 but expected 2222222";
-  assert.equal(isRetryablePushError(out), true);
+  assert.strictEqual(isRetryablePushError(out), true);
 });
 
 test('a 403 (no contents: write) is terminal', () => {
   const out =
     "remote: Permission to owner/repo.git denied to tuffgal[bot].\n" +
     "fatal: unable to access 'https://github.com/owner/repo.git/': The requested URL returned error: 403";
-  assert.equal(isRetryablePushError(out), false);
+  assert.strictEqual(isRetryablePushError(out), false);
 });
 
 test('a 401 authentication failure is terminal', () => {
   const out =
     "fatal: Authentication failed for 'https://github.com/owner/repo.git/'\n" +
     'remote: HTTP 401';
-  assert.equal(isRetryablePushError(out), false);
+  assert.strictEqual(isRetryablePushError(out), false);
 });
 
 test('a write-access denial is terminal', () => {
   const out =
     'remote: Write access to repository not granted.\n' +
     "fatal: unable to access 'https://github.com/owner/repo.git/'";
-  assert.equal(isRetryablePushError(out), false);
+  assert.strictEqual(isRetryablePushError(out), false);
 });
 
 // The trap: a protected-branch decline ALSO prints "failed to push some refs"
@@ -67,15 +71,15 @@ test('a protected-branch decline is terminal despite a rejected line', () => {
     ' ! [remote rejected] gh-pages -> gh-pages (protected branch hook declined)',
     "error: failed to push some refs to 'https://github.com/owner/repo.git'",
   ].join('\n');
-  assert.equal(isRetryablePushError(out), false);
+  assert.strictEqual(isRetryablePushError(out), false);
 });
 
 test('an unrecognized error is treated as terminal (no blind retry)', () => {
-  assert.equal(isRetryablePushError('fatal: the remote end hung up unexpectedly'), false);
+  assert.strictEqual(isRetryablePushError('fatal: the remote end hung up unexpectedly'), false);
 });
 
 test('empty / nullish input is terminal', () => {
-  assert.equal(isRetryablePushError(''), false);
-  assert.equal(isRetryablePushError(undefined), false);
-  assert.equal(isRetryablePushError(null), false);
+  assert.strictEqual(isRetryablePushError(''), false);
+  assert.strictEqual(isRetryablePushError(undefined), false);
+  assert.strictEqual(isRetryablePushError(null), false);
 });
