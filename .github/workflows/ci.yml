@@ -333,3 +333,100 @@ jobs:
             echo "Expected the action step to FAIL under default fail-on-changed=true, got '$STEP_OUTCOME'." >&2
             exit 1
           fi
+
+  # Regression lock for the subdir baseline-deletion bug (T1). The approve flow
+  # can't run in CI (it needs a live PR + comment), and every smoke job above
+  # runs from working-directory: '.', so the frame mismatch escaped review. This
+  # job proves the underlying invariant directly: from a non-'.' working-
+  # directory, git's `<rev>:<path>` seed guard MUST carry a leading `./` to
+  # resolve cwd-relative — otherwise the head baselines are never seeded and the
+  # downstream prune deletes every unchanged baseline.
+  approve-subdir-frame:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Seed guard is cwd-relative (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The literal '$HEAD_SHA'/'$BASELINES_PATH' are the strings we grep for
+          # in the source, so the single quotes below are intentional (SC2016).
+          # The fixed, cwd-relative ('./'-prefixed) guard must be present...
+          # shellcheck disable=SC2016
+          if ! grep -Fq 'git cat-file -e "$HEAD_SHA:./$BASELINES_PATH"' approve/action.yml; then
+            echo "approve/action.yml is missing the cwd-relative ('./'-prefixed) seed guard." >&2
+            exit 1
+          fi
+          # ...and the buggy repo-root-relative form must NOT reappear.
+          # shellcheck disable=SC2016
+          if grep -Fq 'git cat-file -e "$HEAD_SHA:$BASELINES_PATH"' approve/action.yml; then
+            echo "approve/action.yml reintroduced the repo-root-relative seed guard (subdir data-loss bug)." >&2
+            exit 1
+          fi
+
+      - name: Seed guard resolves from a subdir working-directory (behavioral)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo="$(mktemp -d)"
+          cd "$repo"
+          git init -q
+          git config user.email ci@example.com
+          git config user.name ci
+
+          # Monorepo consumer: baselines live under a subdir (the working-directory).
+          bp="tuffgal/baselines"
+          mkdir -p "frontend/$bp/visit-home"
+          printf 'PNGDATA' > "frontend/$bp/visit-home/desktop.png"
+          git add -A
+          git commit -qm seed
+          sha="$(git rev-parse HEAD)"
+
+          # Replay the approve seed step from the subdir cwd. The `git archive`
+          # companion line is already cwd-relative; only the guard was wrong.
+          seed() { # $1 = the <rev>:<path> guard expression under test
+            rm -rf "$bp"; mkdir -p "$bp"
+            if git cat-file -e "$1" 2>/dev/null; then
+              git archive "$sha" -- "$bp" | tar -x
+            fi
+          }
+
+          cd "$repo/frontend"
+
+          # OLD guard (repo-root-relative): FALSE from a subdir, so the seed is
+          # skipped and the dir is left empty -> prune would wipe every baseline.
+          seed "$sha:$bp"
+          if find "$bp" -type f | grep -q .; then
+            echo "OLD guard unexpectedly seeded baselines; the bug is not being exercised." >&2
+            exit 1
+          fi
+
+          # NEW guard ('./'-prefixed, cwd-relative): TRUE, head baselines land
+          # under the subdir with their committed content.
+          seed "$sha:./$bp"
+          if [ "$(cat "$bp/visit-home/desktop.png")" != "PNGDATA" ]; then
+            echo "NEW guard failed to seed the head baseline from a subdir working-directory." >&2
+            find "$bp" -type f || true
+            exit 1
+          fi
+
+          # Default working-directory ('.'): the '.'-prefixed guard must still
+          # resolve at the repo root so the common case never regresses.
+          root="$(mktemp -d)"
+          cd "$root"
+          git init -q
+          git config user.email ci@example.com
+          git config user.name ci
+          mkdir -p "$bp/visit-home"
+          printf 'ROOT' > "$bp/visit-home/desktop.png"
+          git add -A
+          git commit -qm seed
+          rsha="$(git rev-parse HEAD)"
+          if ! git cat-file -e "$rsha:./$bp" 2>/dev/null; then
+            echo "'./'-prefixed guard failed for the default '.' working-directory (regression)." >&2
+            exit 1
+          fi
+
+          echo "subdir-frame: OLD guard skips the seed, NEW guard seeds, default '.' unaffected."

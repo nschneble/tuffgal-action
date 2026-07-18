@@ -372,7 +372,15 @@ runs:
         git fetch --no-tags --depth=1 origin "$HEAD_SHA"
         rm -rf "$BASELINES_PATH"
         mkdir -p "$BASELINES_PATH"
-        if git cat-file -e "$HEAD_SHA:$BASELINES_PATH" 2>/dev/null; then
+        # BASELINES_PATH is working-directory-relative (this step runs with
+        # working-directory: inputs.working-directory). git's `<rev>:<path>`
+        # syntax is repo-root-relative and ignores cwd, so the leading `./` is
+        # load-bearing: it makes the guard cwd-relative to match the (already
+        # cwd-relative) `git archive` pathspec below. Without it a subdir
+        # consumer's guard is always FALSE, the head baselines are never seeded,
+        # and the downstream prune deletes every unchanged baseline. Locked by
+        # ci.yml `approve-subdir-frame`.
+        if git cat-file -e "$HEAD_SHA:./$BASELINES_PATH" 2>/dev/null; then
           git archive "$HEAD_SHA" -- "$BASELINES_PATH" | tar -x
         fi
 
