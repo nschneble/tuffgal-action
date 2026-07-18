@@ -55,7 +55,7 @@ runs:
     # ------------------------------------------------------------------ #
     - name: Gate on permission + resolve PR
       id: gate
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         # This composite's own action dir, evaluated in the composite context (see
         # the commit step's ACTION_PATH note). The script requires resolve-approver.js
@@ -190,7 +190,7 @@ runs:
     - name: Download candidates artifact
       id: download
       if: steps.gate.outputs.proceed == 'true'
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
         PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
@@ -266,7 +266,7 @@ runs:
 
     - name: No candidates found
       if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found != 'true'
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
       with:
@@ -315,7 +315,7 @@ runs:
     # ------------------------------------------------------------------ #
     - name: Preflight tuffgal supports approve --from
       if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         WORKDIR: ${{ inputs.working-directory }}
         PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
@@ -430,7 +430,7 @@ runs:
     # ------------------------------------------------------------------ #
     - name: Commit baselines to PR head branch
       if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         WORKDIR: ${{ inputs.working-directory }}
         BASELINES_PATH: ${{ inputs.baselines-path }}
