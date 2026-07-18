@@ -114,7 +114,7 @@ runs:
   using: composite
   steps:
     - name: Set up Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         node-version: ${{ inputs.node-version }}
         cache: npm
@@ -283,7 +283,7 @@ runs:
 
     - name: Upload report
       if: always() && inputs.upload-artifacts == 'true' && (steps.outcome.outputs.failed != '0' || steps.outcome.outputs.pending == 'true' || steps.outcome.outputs.outcome == 'no-results')
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: tuffgal-report
         path: ${{ inputs.working-directory }}/${{ inputs.report-path }}/
@@ -291,7 +291,7 @@ runs:
 
     - name: Upload candidates
       if: always() && inputs.upload-artifacts == 'true' && steps.outcome.outputs.pending == 'true'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: tuffgal-candidates
         path: ${{ inputs.working-directory }}/${{ inputs.report-path }}/candidates/
@@ -307,7 +307,7 @@ runs:
     - name: Publish per-PR preview to GitHub Pages
       id: pages
       if: always() && github.event_name == 'pull_request' && inputs.pages-preview == 'true' && steps.outcome.outputs.pending == 'true'
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
       env:
         TUFFGAL_REPORT_PATH: ${{ inputs.report-path }}
         TUFFGAL_BASELINES_PATH: ${{ inputs.baselines-path }}
@@ -426,7 +426,7 @@ runs:
 
     - name: Post sticky PR comment
       if: always() && github.event_name == 'pull_request'
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
       env:
         TUFFGAL_REPORT_PATH: ${{ inputs.report-path }}
         TUFFGAL_BASELINES_PATH: ${{ inputs.baselines-path }}

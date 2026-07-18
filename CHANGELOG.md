@@ -20,6 +20,7 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 ### Security
 
 - `approve` refuses symlinks in the PR head's seeded baselines fail-closed, so a symlink pointing at a secret can't be dereferenced and its bytes committed back onto the branch
+- Every third-party action is SHA-pinned (with a `# vX.Y.Z` comment) and the actionlint installer is pinned to a tagged release verified by SHA256, so a moved tag or hijacked upstream can't slip code into CI — a `github-actions` Dependabot config keeps the pins fresh
 
 ## [v1.2.1] - 2026-07-16
 

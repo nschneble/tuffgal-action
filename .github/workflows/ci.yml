@@ -10,9 +10,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Lint workflows
-        uses: reviewdog/action-actionlint@v1
+        uses: reviewdog/action-actionlint@6fb7acc99f4a1008869fa8a0f09cfca740837d9d # v1.72.0
         with:
           fail_level: error
           reporter: github-check
@@ -20,7 +20,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          # Pin the actionlint installer to a tagged release and verify its
+          # SHA256 before executing. On push to main this job carries a
+          # write-capable token, so fetch-and-run from the moving `main` ref of
+          # a third-party repo is a live remote-code-execution vector — the tag
+          # + checksum close it.
+          installer="$(mktemp)"
+          curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash -o "$installer"
+          echo "72fa3e45ac20f3c3a512d6747b4fcf719e21f890e8c43e78d48a41fdfb900c4e  $installer" | sha256sum -c -
+          # Pin the actionlint binary version too — the installer's built-in
+          # default lags its own release tag.
+          bash "$installer" 1.7.12
           ./actionlint examples/*.yml
 
   # Security unit test for the approve artifact validator — no live GitHub run
@@ -28,7 +38,7 @@ jobs:
   validate-artifact:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Reject malicious + accept clean artifacts
         shell: bash
         run: |
@@ -93,10 +103,10 @@ jobs:
   approve-baseline-tree-unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       # Pin an explicit Node so the node:test stable-API floor is guaranteed
       # rather than inherited from the runner's default (which can lag).
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
       - name: Run baseline-tree unit tests
@@ -115,7 +125,7 @@ jobs:
   approve-require-source-lock:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Commit-step require resolves via the composite action path (source lock)
         shell: bash
         run: |
@@ -143,7 +153,7 @@ jobs:
   smoke-pass:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - uses: ./
         id: tuffgal
@@ -173,7 +183,7 @@ jobs:
   smoke-changed-new:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       # Remove the committed baseline so the story has no baseline to compare
       # against — CI mode reports it as `new` and writes a candidate.
@@ -219,7 +229,7 @@ jobs:
   smoke-changed-drift:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       # Keep the committed baseline but change the rendered page so the compare
       # drifts — exercises the genuine `changed` path, not just missing-baseline.
@@ -259,7 +269,7 @@ jobs:
   smoke-deleted:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       # Add an orphan baseline with no matching story/action so CI mode reports
       # it as `deleted`. The committed visit-home baseline still passes.
@@ -306,7 +316,7 @@ jobs:
   smoke-env-mismatch:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       # Doctor the committed manifest so its recorded platform (darwin) no
       # longer matches this Linux runner. Only `platform` is rewritten — the
@@ -359,7 +369,7 @@ jobs:
   smoke-fail-on-changed-default:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       # A pending change must FAIL the job under the new default (fail-on-changed
       # defaults to true) — the headline breaking change of v1.
@@ -399,7 +409,7 @@ jobs:
   approve-subdir-frame:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Seed guard is cwd-relative (source lock)
         shell: bash
@@ -497,7 +507,7 @@ jobs:
   approve-symlink-backstop:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Symlink backstop is present in the apply step (source lock)
         shell: bash
@@ -555,7 +565,7 @@ jobs:
   parse-malformed-results:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Parse step validates results.json before parsing (source lock)
         shell: bash

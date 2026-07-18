@@ -1,0 +1,17 @@
+# Keep the SHA-pinned third-party actions from ossifying: Dependabot opens
+# weekly PRs bumping each pinned `uses:` to the newest release, updating the
+# commit SHA and its `# vX.Y.Z` comment together.
+version: 2
+updates:
+  # Root scan: .github/workflows/*.yml plus the root composite action.yml.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  # The nested composite action is a separate directory — the root entry does
+  # not reach action.yml files outside the repo root, so approve/ is listed
+  # explicitly to keep its `uses:` pins current too.
+  - package-ecosystem: "github-actions"
+    directory: "/approve"
+    schedule:
+      interval: "weekly"
