@@ -25,9 +25,9 @@
 //                 · MASTER box  — the checked `<!-- tuffgal-approve-box -->` box:
 //                   approve everything (`selection: 'all'`).
 //                 · ITEM boxes  — one or more checked
-//                   `<!-- tuffgal-approve-item:key,… -->` per-story boxes (added
-//                   in the wave-1 comment body): approve only the union of those
-//                   ticked stories' action keys (`selection: string[]`).
+//                   `<!-- tuffgal-approve-item:key,… -->` per-story boxes:
+//                   approve only the union of those ticked stories' action
+//                   keys (`selection: string[]`).
 //               The master box wins when both are ticked — the user asked for
 //               everything, so a partial state underneath it is moot.
 //
