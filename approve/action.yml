@@ -78,7 +78,7 @@ runs:
           // (reaction, permission lookup, fork decline) stay inline below. See
           // resolve-approver.js and the approve-scripts-unit CI job.
           const { resolveApprover } = require(`${process.env.ACTION_PATH}/scripts/resolve-approver.js`);
-          const { proceed, actor, reason } = resolveApprover({
+          const { proceed, actor, reason, selection } = resolveApprover({
             eventName: context.eventName,
             action: context.payload.action,
             comment,
@@ -154,6 +154,11 @@ runs:
           core.setOutput('comment_id', String(comment.id));
           core.setOutput('head_ref', pr.data.head.ref);
           core.setOutput('head_sha', pr.data.head.sha);
+          // JSON-encode the approve selection ('all' for a mention / master box,
+          // or a string[] of action keys for a partial per-item approve) since
+          // Actions outputs are strings; the filter step JSON.parses it back. Both
+          // shapes round-trip cleanly through JSON.stringify / JSON.parse.
+          core.setOutput('selection', JSON.stringify(selection));
 
     # ------------------------------------------------------------------ #
     # 2. Check out the BASE repository's DEFAULT branch — trusted code    #
@@ -303,6 +308,95 @@ runs:
         echo "cand_dir=$CAND_DIR" >> "$GITHUB_OUTPUT"
 
     # ------------------------------------------------------------------ #
+    # 4b. Narrow the extracted candidate tree to the approver's          #
+    #     selection BEFORE the CLI promotes it. A full approve            #
+    #     (selection 'all' — a mention or the master box) is a STRICT     #
+    #     no-op here: nothing is removed and the tree is byte-identical   #
+    #     to today's unconditional promote — the regression guard for     #
+    #     every existing full-approve consumer. A partial per-item        #
+    #     approve (selection is an array of action keys) DELETES every    #
+    #     candidate action-dir NOT in the validated selection; the CLI    #
+    #     walks whatever action-dirs are physically present under         #
+    #     `--from`, so removing a dir here is the sole, sufficient        #
+    #     mechanism to exclude it from promotion. `--prune`'s deleted-    #
+    #     baseline handling in the apply step is UNAFFECTED and stays     #
+    #     unconditional on full and partial approves alike.               #
+    #                                                                     #
+    #     SECURITY: the selection keys are UNTRUSTED (parsed from a PR    #
+    #     comment a write actor can edit their own copy of). The pure     #
+    #     module re-validates every key against ACTION_NAME_PATTERN and   #
+    #     drops any that fail; this caller re-validates AGAIN and only    #
+    #     ever rm's a path joined UNDER $CAND_DIR, never trusting a name  #
+    #     as a full path — defense in depth mirroring baseline-tree.js's  #
+    #     guard posture.                                                  #
+    # ------------------------------------------------------------------ #
+    - name: Filter candidates to selection
+      id: filter
+      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        CAND_DIR: ${{ steps.extract.outputs.cand_dir }}
+        SELECTION: ${{ steps.gate.outputs.selection }}
+        # This composite's own action dir (see the commit step's ACTION_PATH note).
+        # The script requires filter-candidates.js from here.
+        ACTION_PATH: ${{ github.action_path }}
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+
+          // The PURE keep/remove partition + the untrusted-key allowlist
+          // validation live in a committed, unit-tested module. The readdir and
+          // rmSync side effects stay inline. See filter-candidates.js and the
+          // approve-scripts-unit CI job.
+          const { computeCandidateFilter, ACTION_NAME_PATTERN } =
+            require(`${process.env.ACTION_PATH}/scripts/filter-candidates.js`);
+
+          const candDir = process.env.CAND_DIR;
+          // The gate JSON-encodes the selection ('all' or a string[] of keys); parse
+          // it back to the shape resolveApprover produced.
+          const selection = JSON.parse(process.env.SELECTION);
+
+          // Only top-level DIRECTORY entries are candidate action-dirs. results.json
+          // (a file) is dropped by the withFileTypes filter before the pure filter
+          // ever sees a name — a file is never a deletion candidate.
+          const presentDirNames = fs.readdirSync(candDir, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name);
+
+          const { keep, remove } = computeCandidateFilter(selection, presentDirNames);
+
+          // Surface the partition to the commit step for the success comment.
+          core.setOutput('partial', selection === 'all' ? 'false' : 'true');
+          core.setOutput('kept', String(keep.length));
+          core.setOutput('total', String(presentDirNames.length));
+
+          if (selection === 'all') {
+            // Strict no-op: nothing is removed, the tree stays byte-identical to
+            // today's unconditional promote.
+            core.info(`Full approve: keeping all ${keep.length} candidate baseline(s); nothing removed.`);
+            return;
+          }
+
+          const resolvedCandDir = path.resolve(candDir);
+          for (const name of remove) {
+            // Belt-and-suspenders. Every `remove` name already came from readdir of
+            // our own extracted tree and the pure module already dropped malformed
+            // keys, but the DELETION path is the sharp edge: re-validate the name
+            // against the allowlist and refuse anything whose join escapes the
+            // candidate dir, so a name is never trusted as a full path.
+            if (!ACTION_NAME_PATTERN.test(name)) {
+              throw new Error(`Refusing to remove non-allowlisted candidate entry: ${name}`);
+            }
+            const target = path.join(candDir, name);
+            if (path.dirname(path.resolve(target)) !== resolvedCandDir) {
+              throw new Error(`Refusing to remove candidate entry outside the candidate dir: ${name}`);
+            }
+            fs.rmSync(target, { recursive: true, force: true });
+          }
+          core.info(`Partial approve: kept ${keep.length} of ${presentDirNames.length} candidate baseline(s); removed ${remove.length}.`);
+
+    # ------------------------------------------------------------------ #
     # 5. Preflight the trusted default-branch CLI for `approve --from`    #
     #    support BEFORE we invoke it. A tuffgal older than                #
     #    `0.2.0-alpha.1` has no `--from`, silently falls through to a     #
@@ -443,6 +537,13 @@ runs:
         # 'true'/'false' string from a GitHub-expression comparison; the token
         # value itself never reaches the environment or the logs.
         TOKEN_IS_DEFAULT: ${{ inputs.token == github.token }}
+        # Partial-approve context from the filter step, for the success comment.
+        # IS_PARTIAL is 'true' only when the approver ticked a subset of stories
+        # (not a mention / master box); PROMOTED_COUNT / CANDIDATE_COUNT are the
+        # kept-vs-present counts the filter computed.
+        IS_PARTIAL: ${{ steps.filter.outputs.partial }}
+        PROMOTED_COUNT: ${{ steps.filter.outputs.kept }}
+        CANDIDATE_COUNT: ${{ steps.filter.outputs.total }}
         # This composite's own action dir. `github.action_path` is only supported
         # in composite actions and is evaluated HERE in the composite's context;
         # it is NOT the same as `GITHUB_ACTION_PATH` inside the nested github-
@@ -584,6 +685,15 @@ runs:
           // PAT / App token pushes like a normal user, so the check re-runs.
           const tokenIsDefault = process.env.TOKEN_IS_DEFAULT === 'true';
           const committed = `🚀 Committed candidate baselines to \`${headRef}\` as [\`${commit.data.sha.slice(0, 7)}\`](${context.serverUrl}/${owner}/${repo}/commit/${commit.data.sha}).`;
+
+          // On a partial per-item approve, name how many of the run's candidate
+          // baselines were promoted. A full approve ('all' via a mention or the
+          // master box) says nothing extra — the message is unchanged for every
+          // existing consumer.
+          const isPartial = process.env.IS_PARTIAL === 'true';
+          const partialNote = isPartial
+            ? ['', `Promoted ${process.env.PROMOTED_COUNT} of ${process.env.CANDIDATE_COUNT} candidate baselines (partial approve).`]
+            : [];
           const tail = tokenIsDefault
             ? [
                 '',
@@ -601,5 +711,5 @@ runs:
               ];
           await github.rest.issues.createComment({
             owner, repo, issue_number: Number(process.env.PR_NUMBER),
-            body: ['<!-- tuffgal-approve -->', committed, ...tail].join('\n'),
+            body: ['<!-- tuffgal-approve -->', committed, ...partialNote, ...tail].join('\n'),
           });

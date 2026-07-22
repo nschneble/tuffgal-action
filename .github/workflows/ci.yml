@@ -126,11 +126,11 @@ jobs:
   # `GITHUB_ACTION_PATH` resolves to a nonexistent path and crashes the step at
   # runtime. The comment-gated approve flow can't run in CI, so this job is the
   # only tripwire against the require-blocker regression: it locks the
-  # documented-correct idiom in source for all three approve modules —
-  # baseline-tree.js (commit step), resolve-approver.js (permission gate), and
-  # select-candidate.js (download step) — asserting the composite passes its
-  # `github.action_path` through the step env as ACTION_PATH and each script
-  # requires from that.
+  # documented-correct idiom in source for all four approve modules —
+  # baseline-tree.js (commit step), resolve-approver.js (permission gate),
+  # select-candidate.js (download step), and filter-candidates.js (per-baseline
+  # filter step) — asserting the composite passes its `github.action_path`
+  # through the step env as ACTION_PATH and each script requires from that.
   approve-require-source-lock:
     runs-on: ubuntu-latest
     steps:
@@ -153,7 +153,7 @@ jobs:
           # shellcheck disable=SC2016
           good_suffix='.js`)'
           bad_prefix='process.env.GITHUB_ACTION_PATH}/scripts/'
-          for mod in baseline-tree resolve-approver select-candidate; do
+          for mod in baseline-tree resolve-approver select-candidate filter-candidates; do
             if ! grep -Fq "${good_prefix}${mod}${good_suffix}" approve/action.yml; then
               echo "approve/action.yml must require $mod.js via process.env.ACTION_PATH." >&2
               exit 1
