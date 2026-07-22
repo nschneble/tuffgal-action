@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 //
 // Pure, unit-testable builder for the sticky PR comment body. Given the pieces
 // the `Post sticky PR comment` step has already computed — the parsed outcome +
@@ -21,7 +21,7 @@
 // Injected as the first line of every comment body. The upsert step greps for
 // this marker to find the comment to update, so it is exported rather than
 // duplicated at the call site.
-const MARKER = '<!-- tuffgal-report -->';
+const MARKER = "<!-- tuffgal-report -->";
 
 // The action-key allowlist, applied on the WRITE side so a malformed key never
 // even reaches the rendered marker. Intentionally hand-duplicated (not imported)
@@ -43,45 +43,54 @@ const ACTION_NAME_PATTERN = /^[a-z0-9-]+$/;
 // upstream `keysAt` caller), so a malformed key never reaches the comment; an
 // empty result renders an empty payload (`tuffgal-approve-item:`), never a
 // malformed marker.
-const APPROVE_ITEM_MARKER_PREFIX = 'tuffgal-approve-item:';
+const APPROVE_ITEM_MARKER_PREFIX = "tuffgal-approve-item:";
 const approveItemMarker = (actionKeys) =>
   `<!-- ${APPROVE_ITEM_MARKER_PREFIX}${(actionKeys || [])
-    .filter((key) => typeof key === 'string' && ACTION_NAME_PATTERN.test(key))
-    .join(',')} -->`;
+    .filter((key) => typeof key === "string" && ACTION_NAME_PATTERN.test(key))
+    .join(",")} -->`;
 
 // One per-item approve checkbox line. Rendered as a top-level task-list item
 // (not nested inside the entry's `<details>`) on purpose: a checkbox toggled
 // inside a `<details>` bubbles its click to the collapsible and snaps it shut,
 // so the interactive box lives on its own line above the thumbnails.
 const approveItemCheckbox = (entry) =>
-  `- [ ] ${approveItemMarker(entry.actionKeys)} Approve **${escapeHtml(entry.name)}**`;
+  `- [ ] ${approveItemMarker(entry.actionKeys)} Approve **${escapeHtml(
+    entry.name
+  )}**`;
 
 // Escape text for HTML flow content (story names in a <summary>).
 const escapeHtml = (text) =>
-  String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 
 // Escape text for an HTML attribute value (the <img> src URL and alt text).
 // Extends the flow escape with `"` so a value carrying a double quote — a
 // crafted story name in the alt, or a stray quote in an image path in the src —
 // can't break out of the attribute. Cosmetic markdown-injection hardening.
-const escapeAttribute = (text) => escapeHtml(text).replace(/"/g, '&quot;');
+const escapeAttribute = (text) => escapeHtml(text).replace(/"/g, "&quot;");
 
 // One inline thumbnail, or an italic placeholder when its preview URL is null
 // (preview off, or the image lives under neither report nor baselines root).
 const thumbnail = (url, label) =>
   url
-    ? `<img src="${escapeAttribute(url)}" alt="${escapeAttribute(label)}" width="260">`
+    ? `<img src="${escapeAttribute(url)}" alt="${escapeAttribute(
+        label
+      )}" width="260">`
     : `<em>${escapeHtml(label)} unavailable</em>`;
 
 // The env-mismatch banner. Extracted for reuse; the bash step-summary still
 // hand-duplicates this wording, so the two are kept in step with each other.
 function renderEnvMismatchBanner(mismatchKeys) {
   const out = [
-    '> ⚠️ **Capture environment changed** — the committed baselines were captured in a different environment than this CI run. Comparison still ran, but expect a full re-approve.',
+    "> ⚠️ **Capture environment changed** — the committed baselines were captured in a different environment than this CI run. Comparison still ran, but expect a full re-approve.",
   ];
   if (mismatchKeys && mismatchKeys.length) {
-    out.push('>');
-    out.push('> Changed keys: ' + mismatchKeys.map((key) => '`' + key + '`').join(', '));
+    out.push(">");
+    out.push(
+      "> Changed keys: " + mismatchKeys.map((key) => "`" + key + "`").join(", ")
+    );
   }
   return out;
 }
@@ -90,8 +99,8 @@ function renderEnvMismatchBanner(mismatchKeys) {
 // hand-duplicates it, so row order + labels are kept in step with that summary.
 function renderTotalsTable(counts) {
   return [
-    '| Status | Count |',
-    '|--------|-------|',
+    "| Status | Count |",
+    "|--------|-------|",
     `| Pass | ${counts.passed} |`,
     `| Changed | ${counts.changed} |`,
     `| New | ${counts.new} |`,
@@ -104,10 +113,10 @@ function renderTotalsTable(counts) {
 // The actionable next-step line for the two outcomes that otherwise degrade to a
 // bare run link. Kept in step with the bash summary's equivalents.
 const ACTIONABLE = {
-  'no-results':
-    'The run wrote no `results.json` — check the Run Tuffgal step log and confirm `report-path` matches `paths.report` in tuffgal.config.ts.',
+  "no-results":
+    "The run wrote no `results.json` — check the Run Tuffgal step log and confirm `report-path` matches `paths.report` in tuffgal.config.ts.",
   failed:
-    'Download the `tuffgal-report` artifact and open `index.html` for story-by-story diffs and traces.',
+    "Download the `tuffgal-report` artifact and open `index.html` for story-by-story diffs and traces.",
 };
 
 // Build the full sticky-comment markdown body.
@@ -136,22 +145,26 @@ function buildCommentBody({
   runUrl,
 }) {
   const reportUrl = previewUrl ? `${previewUrl}/report/index.html` : null;
-  const storyLink = (entry) => (reportUrl ? `${reportUrl}#story-${entry.index}` : null);
+  const storyLink = (entry) =>
+    reportUrl ? `${reportUrl}#story-${entry.index}` : null;
   const pending =
-    (Number(counts.new) || 0) + (Number(counts.changed) || 0) + (Number(counts.deleted) || 0) > 0;
+    (Number(counts.new) || 0) +
+      (Number(counts.changed) || 0) +
+      (Number(counts.deleted) || 0) >
+    0;
 
   const lines = [];
   lines.push(MARKER);
-  lines.push('## 👁️ Tuffgal visual regression');
-  lines.push('');
+  lines.push("## 👁️ Tuffgal visual regression");
+  lines.push("");
   lines.push(`Outcome: **${outcome}**`);
-  lines.push('');
+  lines.push("");
   if (envMismatch) {
     for (const line of renderEnvMismatchBanner(mismatchKeys)) lines.push(line);
-    lines.push('');
+    lines.push("");
   }
   for (const line of renderTotalsTable(counts)) lines.push(line);
-  lines.push('');
+  lines.push("");
 
   // Changed: with a preview, each story is a collapsible carrying inline
   // baseline / actual / diff thumbnails plus a deep-link that opens the report
@@ -160,69 +173,85 @@ function buildCommentBody({
   // screen-reader user gets per-image context in a multi-story comment.
   if (changed.length) {
     lines.push(`### Changed (${changed.length})`);
-    lines.push('');
+    lines.push("");
     for (const entry of changed) {
       lines.push(approveItemCheckbox(entry));
       if (previewUrl) {
-        lines.push('<details>');
+        lines.push("<details>");
         lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
-        lines.push('');
-        lines.push('| Baseline | Actual | Diff |');
-        lines.push('|---|---|---|');
+        lines.push("");
+        lines.push("| Baseline | Actual | Diff |");
+        lines.push("|---|---|---|");
         lines.push(
-          `| ${thumbnail(entry.baseline, `baseline for ${entry.name}`)} | ${thumbnail(entry.actual, `actual for ${entry.name}`)} | ${thumbnail(entry.diff, `diff for ${entry.name}`)} |`,
+          `| ${thumbnail(
+            entry.baseline,
+            `baseline for ${entry.name}`
+          )} | ${thumbnail(
+            entry.actual,
+            `actual for ${entry.name}`
+          )} | ${thumbnail(entry.diff, `diff for ${entry.name}`)} |`
         );
-        lines.push('');
-        lines.push(`[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`);
-        lines.push('</details>');
+        lines.push("");
+        lines.push(
+          `[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`
+        );
+        lines.push("</details>");
+        lines.push("");
       }
     }
-    lines.push('');
+    lines.push("");
   }
 
   // New: no prior baseline to compare, so show the proposed one (the run's
   // actual = the candidate) inline.
   if (added.length) {
     lines.push(`### New (${added.length})`);
-    lines.push('');
+    lines.push("");
     for (const entry of added) {
       lines.push(approveItemCheckbox(entry));
       if (previewUrl) {
-        lines.push('<details>');
+        lines.push("<details>");
         lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
-        lines.push('');
+        lines.push("");
         lines.push(
-          `Proposed new baseline: ${thumbnail(entry.actual, `proposed baseline for ${entry.name}`)}`,
+          `Proposed new baseline: ${thumbnail(
+            entry.actual,
+            `proposed baseline for ${entry.name}`
+          )}`
         );
-        lines.push('');
-        lines.push(`[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`);
-        lines.push('</details>');
+        lines.push("");
+        lines.push(
+          `[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`
+        );
+        lines.push("</details>");
+        lines.push("");
       }
     }
-    lines.push('');
+    lines.push("");
   }
 
   if (deletedNames.length) {
     lines.push(`### Deleted (${deletedNames.length})`);
-    for (const name of deletedNames) lines.push(`- ${String(name).replace(/[\r\n]+/g, ' ')}`);
-    lines.push('');
+    for (const name of deletedNames)
+      lines.push(`- ${String(name).replace(/[\r\n]+/g, " ")}`);
+    lines.push("");
   }
 
   // Name the concrete next step for the two outcomes that otherwise fall to a
   // bare run link, matching the tone of the approve preflight's messages.
   if (ACTIONABLE[outcome]) {
     lines.push(ACTIONABLE[outcome]);
-    lines.push('');
+    lines.push("");
   }
 
   if (pending) {
-    lines.push('### Approve these changes');
-    lines.push('');
+    lines.push("### Approve these changes");
+    lines.push("");
     if (reportUrl) {
       lines.push(
-        `📊 [Open the full report](${reportUrl}) — scrolls to each changed story with screenshots expanded.`,
+        `📊 [Open the full report](${reportUrl}) — scrolls to each changed story with screenshots expanded.`
       );
-      lines.push('');
+      lines.push("");
     }
     // Primary one-click path: tick the box. The approve workflow (see
     // examples/tuffgal-approve.yml) fires on the `edited` event, verifies the
@@ -231,21 +260,23 @@ function buildCommentBody({
     // the checkbox can never be confused with an unrelated task list a reviewer
     // adds elsewhere.
     lines.push(
-      '- [ ] <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit the candidate baselines to this PR (requires write access).',
+      "- [ ] <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit the candidate baselines to this PR (requires write access)."
     );
-    lines.push('');
+    lines.push("");
     lines.push(
-      '…or comment `@tuffgal approve`. Prefer a local checkout? Download the `tuffgal-candidates` artifact from the run and run `npx tuffgal approve --from <extracted-dir> --prune`, then commit the updated baselines directory.',
+      "…or comment `@tuffgal approve`. Prefer a local checkout? Download the `tuffgal-candidates` artifact from the run and run `npx tuffgal approve --from <extracted-dir> --prune`, then commit the updated baselines directory."
     );
-    lines.push('');
+    lines.push("");
     lines.push(`[View the run →](${runUrl})`);
   } else if (reportUrl) {
-    lines.push(`[Open the report →](${reportUrl}) · [View the run →](${runUrl})`);
+    lines.push(
+      `[Open the report →](${reportUrl}) · [View the run →](${runUrl})`
+    );
   } else {
     lines.push(`[View the run →](${runUrl})`);
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 module.exports = {
