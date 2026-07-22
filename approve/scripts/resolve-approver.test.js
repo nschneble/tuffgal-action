@@ -34,6 +34,8 @@ test('mention: `@tuffgal approve` resolves the approver to the comment author', 
     actor: 'maintainer',
     via: 'mention',
     reason: null,
+    // A mention is always a full approve.
+    selection: 'all',
   });
 });
 
@@ -95,7 +97,24 @@ const reportBody = (box) =>
     `- [${box}] <!-- tuffgal-approve-box --> Approve these baselines`,
   ].join('\n');
 
-test('checkbox: a ticked approve box on an edited report resolves to the EDITOR', () => {
+// One per-item approve checkbox line, mirroring `scripts/build-comment.js`'s
+// `approveItemCheckbox` render: box state, the item marker with a comma-joined
+// key payload, then the bold story name.
+const itemLine = (box, keys, name) =>
+  `- [${box}] <!-- tuffgal-approve-item:${keys} --> **${name}**`;
+
+// A full report body carrying the (unticked) master box plus a set of per-item
+// boxes, so the master-vs-item precedence and item-union math are exercised
+// against a body shaped like the real comment.
+const itemReportBody = (masterBox, items) =>
+  [
+    '<!-- tuffgal-report -->',
+    'Some visual report table…',
+    ...items.map(({ box, keys, name }) => itemLine(box, keys, name)),
+    `- [${masterBox}] <!-- tuffgal-approve-box --> Approve these baselines`,
+  ].join('\n');
+
+test('checkbox: a ticked master box on an edited report resolves to the EDITOR and full approve', () => {
   const result = resolveApprover({
     eventName: 'issue_comment',
     action: 'edited',
@@ -109,6 +128,8 @@ test('checkbox: a ticked approve box on an edited report resolves to the EDITOR'
     actor: 'the-editor',
     via: 'checkbox',
     reason: null,
+    // The master box means approve everything.
+    selection: 'all',
   });
 });
 
@@ -122,6 +143,7 @@ test('checkbox: an UNCHECKED box is a no-op (fail closed)', () => {
   });
   assert.strictEqual(result.proceed, false);
   assert.strictEqual(result.reason, 'no-trigger');
+  assert.strictEqual(result.selection, null);
 });
 
 test('checkbox: a ticked box on a non-edited (created) event does NOT trigger', () => {
@@ -171,6 +193,157 @@ test('checkbox: a ticked unrelated box does NOT satisfy the approve box (fail cl
   assert.strictEqual(result.reason, 'no-trigger');
 });
 
+// --- partial per-item approve shape -------------------------------------- //
+// The new trigger: with the master box UNticked, one or more per-story item
+// boxes ticked is itself a valid approve, narrowed to the union of the ticked
+// stories' action keys. Same trust boundary as the master box (edited event +
+// report marker), so the actor is the editor.
+
+test('item: one ticked item box (master unticked) approves just that story key', () => {
+  const body = itemReportBody(' ', [{ box: 'x', keys: 'home-hero', name: 'Home hero' }]);
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body, user: { login: 'tuffgal[bot]' } },
+    issue: prIssue,
+    contextActor: 'the-editor',
+  });
+  assert.deepStrictEqual(result, {
+    proceed: true,
+    actor: 'the-editor',
+    via: 'checkbox',
+    reason: null,
+    selection: ['home-hero'],
+  });
+});
+
+test('item: multiple ticked item boxes across stories union their keys (deduped)', () => {
+  const body = itemReportBody(' ', [
+    { box: 'x', keys: 'home-hero', name: 'Home hero' },
+    { box: ' ', keys: 'about-team', name: 'About team' }, // unticked → excluded
+    { box: 'X', keys: 'home-hero,footer', name: 'Footer (also home-hero)' }, // dup home-hero
+  ]);
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body, user: { login: 'tuffgal[bot]' } },
+    issue: prIssue,
+    contextActor: 'the-editor',
+  });
+  assert.strictEqual(result.proceed, true);
+  assert.strictEqual(result.via, 'checkbox');
+  // Union of the two TICKED boxes, home-hero deduped; about-team never enters.
+  assert.deepStrictEqual(result.selection, ['home-hero', 'footer']);
+});
+
+test('item: a single ticked box with a multi-key payload contributes every key', () => {
+  const body = itemReportBody(' ', [{ box: 'x', keys: 'key-one,key-two', name: 'Two keys' }]);
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body, user: { login: 'tuffgal[bot]' } },
+    issue: prIssue,
+    contextActor: 'the-editor',
+  });
+  assert.strictEqual(result.proceed, true);
+  assert.deepStrictEqual(result.selection, ['key-one', 'key-two']);
+});
+
+test('item + master both ticked: the master box wins (full approve)', () => {
+  const body = itemReportBody('x', [{ box: 'x', keys: 'home-hero', name: 'Home hero' }]);
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body, user: { login: 'tuffgal[bot]' } },
+    issue: prIssue,
+    contextActor: 'the-editor',
+  });
+  assert.strictEqual(result.proceed, true);
+  assert.strictEqual(result.via, 'checkbox');
+  // Master takes precedence over the partial item state ticked alongside it.
+  assert.strictEqual(result.selection, 'all');
+});
+
+test('item: no boxes ticked at all is a no-op (unchanged fail-closed behavior)', () => {
+  const body = itemReportBody(' ', [
+    { box: ' ', keys: 'home-hero', name: 'Home hero' },
+    { box: ' ', keys: 'about-team', name: 'About team' },
+  ]);
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body, user: { login: 'tuffgal[bot]' } },
+    issue: prIssue,
+    contextActor: 'the-editor',
+  });
+  assert.strictEqual(result.proceed, false);
+  assert.strictEqual(result.reason, 'no-trigger');
+  assert.strictEqual(result.selection, null);
+});
+
+// A ticked item box whose payload is empty (rendered as `tuffgal-approve-item:`
+// for a story with no action keys) contributes nothing — so if it's the only
+// ticked box, there is nothing to approve and it is not a trigger.
+test('item: a ticked box with an empty payload contributes nothing (no-op alone)', () => {
+  const body = itemReportBody(' ', [{ box: 'x', keys: '', name: 'Keyless story' }]);
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body, user: { login: 'tuffgal[bot]' } },
+    issue: prIssue,
+    contextActor: 'the-editor',
+  });
+  assert.strictEqual(result.proceed, false);
+  assert.strictEqual(result.reason, 'no-trigger');
+  assert.strictEqual(result.selection, null);
+});
+
+// An empty-payload ticked box alongside a keyed ticked box: the empty one drops
+// out, the keyed one still drives a partial approve.
+test('item: an empty-payload ticked box drops out but a keyed sibling still triggers', () => {
+  const body = itemReportBody(' ', [
+    { box: 'x', keys: '', name: 'Keyless story' },
+    { box: 'x', keys: 'home-hero', name: 'Home hero' },
+  ]);
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body, user: { login: 'tuffgal[bot]' } },
+    issue: prIssue,
+    contextActor: 'the-editor',
+  });
+  assert.strictEqual(result.proceed, true);
+  assert.deepStrictEqual(result.selection, ['home-hero']);
+});
+
+test('item: a ticked item box on a non-edited (created) event does NOT trigger', () => {
+  const body = itemReportBody(' ', [{ box: 'x', keys: 'home-hero', name: 'Home hero' }]);
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'created',
+    comment: { body, user: { login: 'tuffgal[bot]' } },
+    issue: prIssue,
+    contextActor: 'the-editor',
+  });
+  assert.strictEqual(result.proceed, false);
+  assert.strictEqual(result.reason, 'no-trigger');
+  assert.strictEqual(result.selection, null);
+});
+
+test('item: ticked item boxes missing the report marker do NOT trigger', () => {
+  const body = itemLine('x', 'home-hero', 'Home hero'); // no <!-- tuffgal-report -->
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body, user: { login: 'tuffgal[bot]' } },
+    issue: prIssue,
+    contextActor: 'the-editor',
+  });
+  assert.strictEqual(result.proceed, false);
+  assert.strictEqual(result.reason, 'no-trigger');
+  assert.strictEqual(result.selection, null);
+});
+
 // --- fail-closed actor guard --------------------------------------------- //
 // The bot-suffix ignore stops the visual workflow's own sticky-comment refresh
 // (a `[bot]` editor) from looping back into an approval. Reverting the
@@ -187,6 +360,23 @@ test('actor: a bot-authored checkbox edit is ignored (fail closed)', () => {
   assert.strictEqual(result.proceed, false);
   assert.strictEqual(result.reason, 'ignored-actor');
   assert.strictEqual(result.actor, 'tuffgal[bot]');
+  assert.strictEqual(result.selection, null);
+});
+
+// The same bot-suffix guard must ignore a bot editor who ticked per-item boxes,
+// not just the master box — the partial trigger shares the master's actor gate.
+test('actor: a bot-authored per-item box edit is ignored (fail closed)', () => {
+  const body = itemReportBody(' ', [{ box: 'x', keys: 'home-hero', name: 'Home hero' }]);
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body, user: { login: 'tuffgal[bot]' } },
+    issue: prIssue,
+    contextActor: 'tuffgal[bot]',
+  });
+  assert.strictEqual(result.proceed, false);
+  assert.strictEqual(result.reason, 'ignored-actor');
+  assert.strictEqual(result.selection, null);
 });
 
 test('actor: a mention whose author is a bot is ignored (fail closed)', () => {
