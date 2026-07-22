@@ -8,6 +8,11 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 _Nothing just yet_
 
+## [v1.4.1] - 2026-07-22
+
+Fixed a bug that kept per-baseline approvals from, you know, WORKING. Shame
+bump.
+
 ## [v1.4.0] - 2026-07-22
 
 ### Added
@@ -193,7 +198,8 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.4.1...HEAD
+[v1.4.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.4.1
 [v1.4.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.4.0
 [v1.3.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.3.0
 [v1.2.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.2.1
