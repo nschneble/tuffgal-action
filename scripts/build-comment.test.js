@@ -6,7 +6,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { buildCommentBody, MARKER, renderTotalsTable } = require('./build-comment.js');
+const {
+  buildCommentBody,
+  MARKER,
+  renderTotalsTable,
+  approveItemMarker,
+} = require('./build-comment.js');
 
 // A baseline set of args. Individual tests override only what they exercise so
 // the branch under test is isolated from the rest of the body.
@@ -72,15 +77,17 @@ test('no banner when the environment matched', () => {
   assert.doesNotMatch(body, /Capture environment changed/);
 });
 
-test('changed stories without a preview list plain names', () => {
+test('changed stories without a preview still render a per-item approve checkbox', () => {
   const body = buildCommentBody({
     ...base(),
     outcome: 'changed',
     counts: { ...base().counts, changed: '1', total: '4' },
-    changed: [{ index: 0, name: 'Home page', baseline: null, actual: null, diff: null }],
+    changed: [{ index: 0, name: 'Home page', baseline: null, actual: null, diff: null, actionKeys: ['home'] }],
   });
   assert.match(body, /### Changed \(1\)/);
-  assert.match(body, /- Home page/);
+  // Approval must work even without a Pages preview, so the checkbox replaces
+  // the old plain `- name` line rather than being dropped on the no-preview path.
+  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:home --> \*\*Home page\*\*/);
   assert.doesNotMatch(body, /<details>/);
   // Pending work still renders the approve CTA without a preview, but the
   // report-only "Open the full report" line needs a preview URL, so it is absent.
@@ -166,14 +173,14 @@ test('new stories with a preview show a proposed baseline with name-bearing alt'
   assert.match(body, /alt="proposed baseline for Nav bar"/);
 });
 
-test('new stories without a preview list plain names', () => {
+test('new stories without a preview still render a per-item approve checkbox', () => {
   const body = buildCommentBody({
     ...base(),
     outcome: 'changed',
     counts: { ...base().counts, new: '1', total: '1' },
-    added: [{ index: 0, name: 'Nav bar', actual: null }],
+    added: [{ index: 0, name: 'Nav bar', actual: null, actionKeys: ['nav'] }],
   });
-  assert.match(body, /- Nav bar/);
+  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:nav --> \*\*Nav bar\*\*/);
   assert.doesNotMatch(body, /<details>/);
 });
 
@@ -256,4 +263,117 @@ test('renderTotalsTable emits the fixed row order', () => {
     '| Failed | 5 |',
     '| Total | 6 |',
   ]);
+});
+
+// Per-item approve checkboxes — the pilot contract every later wave consumes.
+// Each Changed/New entry gets its own task-list checkbox whose marker embeds the
+// entry's candidate-tree action keys, so a later wave can regex `(keys, ticked)`
+// per line with no external index.
+
+test('approveItemMarker embeds comma-joined action keys in an HTML comment', () => {
+  assert.strictEqual(approveItemMarker(['one', 'two']), '<!-- tuffgal-approve-item:one,two -->');
+  // Empty keys still render a well-formed (empty-payload) marker, never junk.
+  assert.strictEqual(approveItemMarker([]), '<!-- tuffgal-approve-item: -->');
+  assert.strictEqual(approveItemMarker(undefined), '<!-- tuffgal-approve-item: -->');
+});
+
+test('a single changed entry renders one per-item approve checkbox with its key', () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: 'changed',
+    counts: { ...base().counts, changed: '1', total: '1' },
+    previewUrl: 'https://pages.example/pr-7',
+    changed: [{
+      index: 0,
+      name: 'Home page',
+      baseline: null,
+      actual: null,
+      diff: null,
+      actionKeys: ['visit-home'],
+    }],
+  });
+  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:visit-home --> \*\*Home page\*\*/);
+  // The checkbox sits ABOVE the collapsible, not inside it, so ticking it can't
+  // snap the <details> shut.
+  const checkboxAt = body.indexOf('tuffgal-approve-item:visit-home');
+  const detailsAt = body.indexOf('<details>');
+  assert.ok(checkboxAt !== -1 && detailsAt !== -1 && checkboxAt < detailsAt);
+});
+
+test('a single new entry renders one per-item approve checkbox with its key', () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: 'changed',
+    counts: { ...base().counts, new: '1', total: '1' },
+    previewUrl: 'https://pages.example/pr-7',
+    added: [{ index: 0, name: 'Nav bar', actual: null, actionKeys: ['render-nav'] }],
+  });
+  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:render-nav --> \*\*Nav bar\*\*/);
+});
+
+test('multiple entries each render their own per-item approve checkbox', () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: 'changed',
+    counts: { ...base().counts, changed: '2', new: '1', total: '3' },
+    changed: [
+      { index: 0, name: 'Home', baseline: null, actual: null, diff: null, actionKeys: ['home'] },
+      { index: 1, name: 'About', baseline: null, actual: null, diff: null, actionKeys: ['about'] },
+    ],
+    added: [{ index: 2, name: 'Contact', actual: null, actionKeys: ['contact'] }],
+  });
+  assert.match(body, /<!-- tuffgal-approve-item:home -->/);
+  assert.match(body, /<!-- tuffgal-approve-item:about -->/);
+  assert.match(body, /<!-- tuffgal-approve-item:contact -->/);
+  // One checkbox per entry, no more, no fewer.
+  assert.strictEqual((body.match(/tuffgal-approve-item:/g) || []).length, 3);
+});
+
+test('a story with 2+ actions comma-joins its keys in one marker', () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: 'changed',
+    counts: { ...base().counts, changed: '1', total: '1' },
+    changed: [{
+      index: 0,
+      name: 'Dashboard',
+      baseline: null,
+      actual: null,
+      diff: null,
+      actionKeys: ['load-dashboard', 'open-panel', 'hover-tile'],
+    }],
+  });
+  assert.match(
+    body,
+    /- \[ \] <!-- tuffgal-approve-item:load-dashboard,open-panel,hover-tile --> \*\*Dashboard\*\*/,
+  );
+});
+
+test('per-item checkboxes leave the master approve-box markup byte-for-byte unchanged', () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: 'changed',
+    counts: { ...base().counts, changed: '1', total: '1' },
+    previewUrl: 'https://pages.example/pr-7',
+    changed: [{ index: 0, name: 'Home', baseline: null, actual: null, diff: null, actionKeys: ['home'] }],
+  });
+  // The master checkbox — its literal marker, label, and helper text — is the
+  // contract the existing approve workflow greps for; this wave must not touch it.
+  assert.ok(
+    body.includes(
+      '- [ ] <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit the candidate baselines to this PR (requires write access).',
+    ),
+  );
+  // The per-item marker and the master marker never collide under a grep.
+  assert.doesNotMatch(body, /tuffgal-approve-item:[^\s]*box/);
+});
+
+test('a story name with HTML metacharacters is escaped in its per-item checkbox', () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: 'changed',
+    counts: { ...base().counts, changed: '1', total: '1' },
+    changed: [{ index: 0, name: 'a <b> "c"', baseline: null, actual: null, diff: null, actionKeys: ['x'] }],
+  });
+  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:x --> \*\*a &lt;b&gt; "c"\*\*/);
 });

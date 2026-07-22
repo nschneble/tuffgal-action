@@ -23,6 +23,26 @@
 // duplicated at the call site.
 const MARKER = '<!-- tuffgal-report -->';
 
+// Per-item approve marker. Each Changed/New baseline entry gets its own GFM
+// task-list checkbox carrying this marker with the entry's candidate-tree
+// action keys embedded directly in the HTML comment — comma-joined, each key
+// matching `[a-z0-9-]+` so the join is unambiguous to split back apart. A later
+// wave regex-extracts `(marker keys) + (ticked state)` per line straight from
+// the comment body, with no external index/lookup table. The `:` prefix keeps
+// it distinct from the master `<!-- tuffgal-approve-box -->` box so neither
+// grep can match the other. Empty keys render an empty payload
+// (`tuffgal-approve-item:`), never a malformed marker.
+const APPROVE_ITEM_MARKER_PREFIX = 'tuffgal-approve-item:';
+const approveItemMarker = (actionKeys) =>
+  `<!-- ${APPROVE_ITEM_MARKER_PREFIX}${(actionKeys || []).join(',')} -->`;
+
+// One per-item approve checkbox line. Rendered as a top-level task-list item
+// (not nested inside the entry's `<details>`) on purpose: a checkbox toggled
+// inside a `<details>` bubbles its click to the collapsible and snaps it shut,
+// so the interactive box lives on its own line above the thumbnails.
+const approveItemCheckbox = (entry) =>
+  `- [ ] ${approveItemMarker(entry.actionKeys)} **${escapeHtml(entry.name)}**`;
+
 // Escape text for HTML flow content (story names in a <summary>).
 const escapeHtml = (text) =>
   String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -84,8 +104,11 @@ const ACTIONABLE = {
 //   envMismatch   boolean — render the capture-environment banner
 //   mismatchKeys  string[] — the changed environment keys, listed under the banner
 //   previewUrl    normalized Pages URL (no trailing slash), or '' when no preview
-//   changed       [{ index, name, baseline, actual, diff }] — image URLs or null
-//   added         [{ index, name, actual }] — proposed-baseline image URL or null
+//   changed       [{ index, name, baseline, actual, diff, actionKeys }] — image
+//                 URLs or null; actionKeys is the story's changed candidate-tree
+//                 keys, embedded in that entry's per-item approve marker
+//   added         [{ index, name, actual, actionKeys }] — proposed-baseline
+//                 image URL or null; actionKeys is the story's new keys
 //   deletedNames  string[] — names of removed stories
 //   runUrl        the workflow-run URL for the fallback link
 function buildCommentBody({
@@ -126,6 +149,7 @@ function buildCommentBody({
     lines.push(`### Changed (${changed.length})`);
     lines.push('');
     for (const entry of changed) {
+      lines.push(approveItemCheckbox(entry));
       if (previewUrl) {
         lines.push('<details>');
         lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
@@ -138,8 +162,6 @@ function buildCommentBody({
         lines.push('');
         lines.push(`[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`);
         lines.push('</details>');
-      } else {
-        lines.push(`- ${entry.name}`);
       }
     }
     lines.push('');
@@ -151,6 +173,7 @@ function buildCommentBody({
     lines.push(`### New (${added.length})`);
     lines.push('');
     for (const entry of added) {
+      lines.push(approveItemCheckbox(entry));
       if (previewUrl) {
         lines.push('<details>');
         lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
@@ -161,8 +184,6 @@ function buildCommentBody({
         lines.push('');
         lines.push(`[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`);
         lines.push('</details>');
-      } else {
-        lines.push(`- ${entry.name}`);
       }
     }
     lines.push('');
@@ -216,6 +237,8 @@ function buildCommentBody({
 
 module.exports = {
   MARKER,
+  APPROVE_ITEM_MARKER_PREFIX,
+  approveItemMarker,
   buildCommentBody,
   renderEnvMismatchBanner,
   renderTotalsTable,
