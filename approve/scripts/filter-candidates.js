@@ -24,8 +24,10 @@
 // DROPPED from the keep-set: it is never used to name a directory, never thrown as
 // a fatal error (a malformed / spoofed key just means "that one wasn't promoted",
 // never "abort the whole approve"), and can never enter `remove` (which is only
-// ever a subset of the present directory names). Mirrors the allowlist-reject
-// posture of baseline-tree.js's `guard()`.
+// ever a subset of the ALLOWLIST-VALID present directory names — a present dir
+// whose own name fails the allowlist is left alone, never removed, so the deletion
+// set is provably allowlist-clean without relying on an inline runtime throw).
+// Mirrors the allowlist-reject posture of baseline-tree.js's `guard()`.
 
 // The action-key allowlist. Kept byte-identical to the tuffgal CLI's own
 // `ACTION_NAME_PATTERN` (exported from tuffgal's baselineStore) — the CLI names
@@ -49,11 +51,14 @@ const ACTION_NAME_PATTERN = /^[a-z0-9-]+$/;
 //       no-op: byte-identical to today's unconditional-promote behavior — the
 //       regression guard for every existing full-approve consumer, since most
 //       approvals stay full 'all' via the master box or a mention).
-//     - selection is an array → keep = the pattern-VALIDATED selected keys that are
-//       also present; remove = every present dir not in keep. A selected key that
-//       fails validation, or that names a dir not actually present (stale /
-//       already-promoted), is a no-op — dropped from keep, never an error. An empty
-//       array keeps nothing (remove = everything present).
+//     - selection is an array → remove = every ALLOWLIST-VALID present dir not in
+//       the pattern-validated selection; keep = every present dir not removed (the
+//       pattern-validated selected present dirs, PLUS any present dir whose own name
+//       fails the allowlist — a malformed present entry is left alone, never
+//       removed). A selected key that fails validation, or that names a dir not
+//       actually present (stale / already-promoted), is a no-op — dropped from the
+//       selection, never an error. An empty array removes every allowlist-valid
+//       present dir and keeps the rest.
 function computeCandidateFilter(selection, presentDirNames) {
   const present = [...presentDirNames];
 
@@ -71,8 +76,19 @@ function computeCandidateFilter(selection, presentDirNames) {
   const selectedValid = new Set(
     (Array.isArray(selection) ? selection : []).filter((key) => ACTION_NAME_PATTERN.test(key)),
   );
-  const keep = present.filter((name) => selectedValid.has(name));
-  const remove = present.filter((name) => !selectedValid.has(name));
+  // `remove` is the deletion set, so it is the sharp edge: constrain it to
+  // allowlist-valid present names HERE, in tested logic. A present dir whose own
+  // name fails the allowlist (a malformed / hand-crafted candidate-tree entry
+  // that is NOT selected) is left alone — never removed, never used to name an
+  // rmSync path — rather than reaching the inline deletion loop and aborting the
+  // whole approve with a runtime throw. `keep` is then everything not removed, so
+  // such a malformed present dir falls into `keep` (left alone) and the output
+  // stays a partition of `present`.
+  const remove = present.filter(
+    (name) => !selectedValid.has(name) && ACTION_NAME_PATTERN.test(name),
+  );
+  const removeSet = new Set(remove);
+  const keep = present.filter((name) => !removeSet.has(name));
   return { keep, remove };
 }
 

@@ -12,8 +12,9 @@
 // decline, and the PR-head resolution — stay inline in action.yml; the inline
 // script requires this module and acts on its verdict.
 //
-// TWO trigger shapes resolve to the same approve, differing only in WHO the
-// approver is:
+// TWO trigger shapes drive the approve. They differ in WHO the approver is and —
+// for a partial per-item approve — in WHAT gets promoted (a mention or the master
+// box approves everything; ticked item boxes narrow to the selected stories):
 //   - mention:  a human comments `@tuffgal approve` → the approver is the comment
 //               AUTHOR (`comment.user.login`).
 //   - checkbox: a human TICKS a box in the bot's sticky report comment

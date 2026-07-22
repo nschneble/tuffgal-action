@@ -23,25 +23,38 @@
 // duplicated at the call site.
 const MARKER = '<!-- tuffgal-report -->';
 
+// The action-key allowlist, applied on the WRITE side so a malformed key never
+// even reaches the rendered marker. Intentionally hand-duplicated (not imported)
+// from `approve/scripts/filter-candidates.js`'s `ACTION_NAME_PATTERN` because
+// that lives in a SEPARATE action package which this module can't cross-require —
+// the same hand-duplication precedent already used for `MARKER` and the other
+// cross-package constants in this repo. Keep byte-identical to that copy.
+const ACTION_NAME_PATTERN = /^[a-z0-9-]+$/;
+
 // Per-item approve marker. Each Changed/New baseline entry gets its own GFM
 // task-list checkbox carrying this marker with the entry's candidate-tree
 // action keys embedded directly in the HTML comment — comma-joined, each key
-// matching `[a-z0-9-]+` so the join is unambiguous to split back apart. A later
-// wave regex-extracts `(marker keys) + (ticked state)` per line straight from
-// the comment body, with no external index/lookup table. The `:` prefix keeps
-// it distinct from the master `<!-- tuffgal-approve-box -->` box so neither
-// grep can match the other. Empty keys render an empty payload
-// (`tuffgal-approve-item:`), never a malformed marker.
+// matching `[a-z0-9-]+` so the join is unambiguous to split back apart. The
+// trigger parser (`resolve-approver.js`) regex-extracts `(marker keys) +
+// (ticked state)` per line straight from the comment body, with no external
+// index/lookup table. The `:` prefix keeps it distinct from the master
+// `<!-- tuffgal-approve-box -->` box so neither grep can match the other. Keys
+// are allowlist-filtered before the join (defense in depth, not trust in the
+// upstream `keysAt` caller), so a malformed key never reaches the comment; an
+// empty result renders an empty payload (`tuffgal-approve-item:`), never a
+// malformed marker.
 const APPROVE_ITEM_MARKER_PREFIX = 'tuffgal-approve-item:';
 const approveItemMarker = (actionKeys) =>
-  `<!-- ${APPROVE_ITEM_MARKER_PREFIX}${(actionKeys || []).join(',')} -->`;
+  `<!-- ${APPROVE_ITEM_MARKER_PREFIX}${(actionKeys || [])
+    .filter((key) => ACTION_NAME_PATTERN.test(key))
+    .join(',')} -->`;
 
 // One per-item approve checkbox line. Rendered as a top-level task-list item
 // (not nested inside the entry's `<details>`) on purpose: a checkbox toggled
 // inside a `<details>` bubbles its click to the collapsible and snaps it shut,
 // so the interactive box lives on its own line above the thumbnails.
 const approveItemCheckbox = (entry) =>
-  `- [ ] ${approveItemMarker(entry.actionKeys)} **${escapeHtml(entry.name)}**`;
+  `- [ ] ${approveItemMarker(entry.actionKeys)} Approve **${escapeHtml(entry.name)}**`;
 
 // Escape text for HTML flow content (story names in a <summary>).
 const escapeHtml = (text) =>
@@ -237,7 +250,6 @@ function buildCommentBody({
 
 module.exports = {
   MARKER,
-  APPROVE_ITEM_MARKER_PREFIX,
   approveItemMarker,
   buildCommentBody,
   renderEnvMismatchBanner,

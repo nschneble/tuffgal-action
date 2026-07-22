@@ -87,7 +87,7 @@ test('changed stories without a preview still render a per-item approve checkbox
   assert.match(body, /### Changed \(1\)/);
   // Approval must work even without a Pages preview, so the checkbox replaces
   // the old plain `- name` line rather than being dropped on the no-preview path.
-  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:home --> \*\*Home page\*\*/);
+  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:home --> Approve \*\*Home page\*\*/);
   assert.doesNotMatch(body, /<details>/);
   // Pending work still renders the approve CTA without a preview, but the
   // report-only "Open the full report" line needs a preview URL, so it is absent.
@@ -180,7 +180,7 @@ test('new stories without a preview still render a per-item approve checkbox', (
     counts: { ...base().counts, new: '1', total: '1' },
     added: [{ index: 0, name: 'Nav bar', actual: null, actionKeys: ['nav'] }],
   });
-  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:nav --> \*\*Nav bar\*\*/);
+  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:nav --> Approve \*\*Nav bar\*\*/);
   assert.doesNotMatch(body, /<details>/);
 });
 
@@ -265,16 +265,24 @@ test('renderTotalsTable emits the fixed row order', () => {
   ]);
 });
 
-// Per-item approve checkboxes — the pilot contract every later wave consumes.
-// Each Changed/New entry gets its own task-list checkbox whose marker embeds the
-// entry's candidate-tree action keys, so a later wave can regex `(keys, ticked)`
-// per line with no external index.
+// Per-item approve checkboxes — the contract the trigger parser
+// (`resolve-approver.js`) consumes. Each Changed/New entry gets its own
+// task-list checkbox whose marker embeds the entry's candidate-tree action keys,
+// so the parser can regex `(keys, ticked)` per line with no external index.
 
 test('approveItemMarker embeds comma-joined action keys in an HTML comment', () => {
   assert.strictEqual(approveItemMarker(['one', 'two']), '<!-- tuffgal-approve-item:one,two -->');
   // Empty keys still render a well-formed (empty-payload) marker, never junk.
   assert.strictEqual(approveItemMarker([]), '<!-- tuffgal-approve-item: -->');
   assert.strictEqual(approveItemMarker(undefined), '<!-- tuffgal-approve-item: -->');
+  // Write-side allowlist (defense in depth): a malformed key is dropped before the
+  // join, so it never reaches the rendered marker; the valid key survives.
+  assert.strictEqual(
+    approveItemMarker(['good-key', '../etc', 'UPPER', 'has spaces']),
+    '<!-- tuffgal-approve-item:good-key -->',
+  );
+  // A selection of only malformed keys renders the empty payload, never junk.
+  assert.strictEqual(approveItemMarker(['../../secret']), '<!-- tuffgal-approve-item: -->');
 });
 
 test('a single changed entry renders one per-item approve checkbox with its key', () => {
@@ -292,7 +300,7 @@ test('a single changed entry renders one per-item approve checkbox with its key'
       actionKeys: ['visit-home'],
     }],
   });
-  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:visit-home --> \*\*Home page\*\*/);
+  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:visit-home --> Approve \*\*Home page\*\*/);
   // The checkbox sits ABOVE the collapsible, not inside it, so ticking it can't
   // snap the <details> shut.
   const checkboxAt = body.indexOf('tuffgal-approve-item:visit-home');
@@ -308,7 +316,7 @@ test('a single new entry renders one per-item approve checkbox with its key', ()
     previewUrl: 'https://pages.example/pr-7',
     added: [{ index: 0, name: 'Nav bar', actual: null, actionKeys: ['render-nav'] }],
   });
-  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:render-nav --> \*\*Nav bar\*\*/);
+  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:render-nav --> Approve \*\*Nav bar\*\*/);
 });
 
 test('multiple entries each render their own per-item approve checkbox', () => {
@@ -345,7 +353,7 @@ test('a story with 2+ actions comma-joins its keys in one marker', () => {
   });
   assert.match(
     body,
-    /- \[ \] <!-- tuffgal-approve-item:load-dashboard,open-panel,hover-tile --> \*\*Dashboard\*\*/,
+    /- \[ \] <!-- tuffgal-approve-item:load-dashboard,open-panel,hover-tile --> Approve \*\*Dashboard\*\*/,
   );
 });
 
@@ -375,5 +383,5 @@ test('a story name with HTML metacharacters is escaped in its per-item checkbox'
     counts: { ...base().counts, changed: '1', total: '1' },
     changed: [{ index: 0, name: 'a <b> "c"', baseline: null, actual: null, diff: null, actionKeys: ['x'] }],
   });
-  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:x --> \*\*a &lt;b&gt; "c"\*\*/);
+  assert.match(body, /- \[ \] <!-- tuffgal-approve-item:x --> Approve \*\*a &lt;b&gt; "c"\*\*/);
 });

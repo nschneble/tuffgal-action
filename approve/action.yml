@@ -380,11 +380,12 @@ runs:
 
           const resolvedCandDir = path.resolve(candDir);
           for (const name of remove) {
-            // Belt-and-suspenders. Every `remove` name already came from readdir of
-            // our own extracted tree and the pure module already dropped malformed
-            // keys, but the DELETION path is the sharp edge: re-validate the name
-            // against the allowlist and refuse anything whose join escapes the
-            // candidate dir, so a name is never trusted as a full path.
+            // Belt-and-suspenders. The pure module already CONSTRAINS `remove` to
+            // allowlist-valid present names (proven by filter-candidates.test.js's
+            // malformed-present-dir case), so this re-check can never legitimately
+            // fire — it stays purely as defense-in-depth on the DELETION path,
+            // alongside the escape-the-candidate-dir refusal below, so a name is
+            // never trusted as a full path.
             if (!ACTION_NAME_PATTERN.test(name)) {
               throw new Error(`Refusing to remove non-allowlisted candidate entry: ${name}`);
             }

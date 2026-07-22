@@ -112,6 +112,50 @@ test('a selection of ONLY malformed keys keeps nothing and removes every present
   assertPartition(result, present);
 });
 
+// --- a malformed PRESENT dir name is never removed ----------------------- //
+// `present` is raw readdir output — it is NEVER itself validated against the
+// allowlist upstream. A candidate tree can contain a dir whose name fails the
+// allowlist (`Weird_Dir`). When it is NOT selected in a partial approve it must be
+// LEFT ALONE (kept), never removed — the deletion set stays allowlist-clean here,
+// in tested logic, instead of hitting the inline deletion loop's runtime throw and
+// aborting the whole approve. This is the case that actually PROVES the contract:
+// the other `remove`-is-allowlist-valid assertions only held incidentally because
+// their `present` fixtures happened to be all-valid.
+
+test('a non-allowlisted PRESENT dir, when unselected, is kept not removed (no inline throw)', () => {
+  const presentWithMalformed = ['home-hero', 'Weird_Dir', 'footer'];
+  const result = computeCandidateFilter(['home-hero'], presentWithMalformed);
+  // Weird_Dir is not selected, but it fails the allowlist, so it is left alone —
+  // never in remove, so the caller's inline deletion loop never sees a name that
+  // would trip its defense-in-depth throw.
+  assert.ok(!result.remove.includes('Weird_Dir'), 'malformed present dir leaked into remove');
+  assert.ok(result.keep.includes('Weird_Dir'), 'malformed present dir must be kept (left alone)');
+  // The one legitimately-unselected valid dir is still removed.
+  assert.deepStrictEqual(result.remove, ['footer']);
+  // Every remove entry is allowlist-valid — now proven, not incidental.
+  for (const name of result.remove) {
+    assert.ok(ACTION_NAME_PATTERN.test(name), `${name} in remove is not an allowlisted key`);
+  }
+  assertPartition(result, presentWithMalformed);
+});
+
+test("selection 'all' with a non-allowlisted present dir still removes nothing (no-op preserved)", () => {
+  const presentWithMalformed = ['home-hero', 'Weird_Dir', 'footer'];
+  const result = computeCandidateFilter('all', presentWithMalformed);
+  assert.deepStrictEqual(result.remove, []);
+  assert.deepStrictEqual(result.keep, presentWithMalformed);
+  assertPartition(result, presentWithMalformed);
+});
+
+test('a non-allowlisted present dir is kept even when NOTHING is selected', () => {
+  // Empty selection removes every allowlist-valid present dir, but the malformed
+  // one is still left alone (kept), never removed.
+  const result = computeCandidateFilter([], ['home-hero', 'Weird_Dir']);
+  assert.deepStrictEqual(result.remove, ['home-hero']);
+  assert.deepStrictEqual(result.keep, ['Weird_Dir']);
+  assertPartition(result, ['home-hero', 'Weird_Dir']);
+});
+
 // --- empty selection array ----------------------------------------------- //
 // resolveApprover already fails `proceed` on a zero-item selection, so this path
 // is not reached in practice — but the pure function's own contract is tested

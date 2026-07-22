@@ -598,8 +598,15 @@ runs:
               // selects by these `.action` directory keys, so the per-item
               // approve checkbox must carry every matching one (not just the
               // single thumbnail action `shotFrom` picks).
+              // Allowlist-filter the keys on this WRITE side too (defense in
+              // depth, symmetric with the read side in resolve-approver.js and the
+              // delete side in filter-candidates.js), so a malformed action key
+              // never even reaches the rendered per-item approve marker. The
+              // pattern is the tuffgal CLI's own action-key allowlist, inlined
+              // here (this github-script block can't require the extracted module).
               const keysAt = (want) =>
-                actions.filter(a => a.status === want).map(a => a.action).filter(Boolean);
+                actions.filter(a => a.status === want).map(a => a.action)
+                  .filter(key => /^[a-z0-9-]+$/.test(key));
               const name = String(s.story || s.file || `story ${index}`).replace(/[\r\n]+/g, ' ');
               if (statuses.includes('new')) {
                 const a = shotFrom('new');
