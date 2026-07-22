@@ -606,7 +606,7 @@ runs:
               // here (this github-script block can't require the extracted module).
               const keysAt = (want) =>
                 actions.filter(a => a.status === want).map(a => a.action)
-                  .filter(key => /^[a-z0-9-]+$/.test(key));
+                  .filter(key => typeof key === 'string' && /^[a-z0-9-]+$/.test(key));
               const name = String(s.story || s.file || `story ${index}`).replace(/[\r\n]+/g, ' ');
               if (statuses.includes('new')) {
                 const a = shotFrom('new');

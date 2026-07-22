@@ -285,6 +285,20 @@ test('approveItemMarker embeds comma-joined action keys in an HTML comment', () 
   assert.strictEqual(approveItemMarker(['../../secret']), '<!-- tuffgal-approve-item: -->');
 });
 
+test('approveItemMarker drops nullish keys instead of string-coercing them', () => {
+  // Regression: the allowlist filter uses RegExp.test(), which string-coerces its
+  // argument — /^[a-z0-9-]+$/.test(undefined) tests "undefined" and returns true,
+  // same for null. A nullish/missing `.action` key (dropped by the old
+  // `.filter(Boolean)`) must NOT survive as a literal "undefined"/"null" segment.
+  assert.strictEqual(approveItemMarker([undefined]), '<!-- tuffgal-approve-item: -->');
+  assert.strictEqual(approveItemMarker([null]), '<!-- tuffgal-approve-item: -->');
+  // A valid key survives while its nullish siblings are dropped — no coercion junk.
+  assert.strictEqual(
+    approveItemMarker(['good-key', undefined, null]),
+    '<!-- tuffgal-approve-item:good-key -->',
+  );
+});
+
 test('a single changed entry renders one per-item approve checkbox with its key', () => {
   const body = buildCommentBody({
     ...base(),

@@ -46,7 +46,7 @@ const ACTION_NAME_PATTERN = /^[a-z0-9-]+$/;
 const APPROVE_ITEM_MARKER_PREFIX = 'tuffgal-approve-item:';
 const approveItemMarker = (actionKeys) =>
   `<!-- ${APPROVE_ITEM_MARKER_PREFIX}${(actionKeys || [])
-    .filter((key) => ACTION_NAME_PATTERN.test(key))
+    .filter((key) => typeof key === 'string' && ACTION_NAME_PATTERN.test(key))
     .join(',')} -->`;
 
 // One per-item approve checkbox line. Rendered as a top-level task-list item
