@@ -6,9 +6,15 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+_Nothing just yet_
+
+## [v1.4.0] - 2026-07-22
+
 ### Added
 
-- Per-baseline approve: tick an individual story's checkbox in the sticky comment to promote just that baseline, or the master box to approve them all (the master box wins when both are ticked; deleted baselines are always pruned)
+Per-baseline approvals. You can now tick an individual story's checkbox in
+the sticky comment to promote just that baseline, or the main checkbox to
+approve them all.
 
 ## [v1.3.0] - 2026-07-18
 
@@ -187,7 +193,8 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.4.0...HEAD
+[v1.4.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.4.0
 [v1.3.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.3.0
 [v1.2.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.2.1
 [v1.2.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.2.0
