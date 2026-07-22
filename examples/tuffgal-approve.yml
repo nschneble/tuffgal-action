@@ -1,6 +1,7 @@
 # Copy this into your consumer repo at .github/workflows/tuffgal-approve.yml
 # It lets maintainers approve Tuffgal candidate baselines two ways:
-#   - tick the "Approve these baselines" checkbox in the bot's PR comment, or
+#   - tick a checkbox in the bot's PR comment — the master "Approve these
+#     baselines" box for all, or a per-story box to approve just that one — or
 #   - comment `@tuffgal approve` on the pull request.
 # Either way the bot verifies the approver has write access, downloads the
 # tuffgal-candidates artifact from the PR's latest run, and commits the approved
@@ -21,15 +22,18 @@ jobs:
   approve:
     # Cheap pre-filter; the action re-validates the trigger and the approver's
     # permission before doing anything. Two shapes: the mention, or an edited
-    # comment whose approve box is ticked. The `[x]` + marker pair keeps an
-    # unrelated ticked task list from triggering.
+    # report comment with a ticked box — the master approve box, or one of the
+    # per-story item boxes for a partial approve. The `[x]` + marker pair keeps
+    # an unrelated ticked task list from triggering.
     if: >-
       github.event.issue.pull_request && (
         contains(github.event.comment.body, '@tuffgal approve') ||
         (github.event.action == 'edited' &&
          contains(github.event.comment.body, 'tuffgal-approve-box') &&
          (contains(github.event.comment.body, '[x] <!-- tuffgal-approve-box') ||
-          contains(github.event.comment.body, '[X] <!-- tuffgal-approve-box')))
+          contains(github.event.comment.body, '[X] <!-- tuffgal-approve-box') ||
+          contains(github.event.comment.body, '[x] <!-- tuffgal-approve-item:') ||
+          contains(github.event.comment.body, '[X] <!-- tuffgal-approve-item:')))
       )
     runs-on: ubuntu-latest
     permissions:

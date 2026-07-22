@@ -6,7 +6,9 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
-_Nothing just yet_
+### Added
+
+- Per-baseline approve: tick an individual story's checkbox in the sticky comment to promote just that baseline, or the master box to approve them all (the master box wins when both are ticked; deleted baselines are always pruned)
 
 ## [v1.3.0] - 2026-07-18
 

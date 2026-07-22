@@ -380,7 +380,8 @@ test('per-item checkboxes leave the master approve-box markup byte-for-byte unch
     changed: [{ index: 0, name: 'Home', baseline: null, actual: null, diff: null, actionKeys: ['home'] }],
   });
   // The master checkbox — its literal marker, label, and helper text — is the
-  // contract the existing approve workflow greps for; this wave must not touch it.
+  // contract the existing approve workflow greps for, so it stays byte-for-byte
+  // stable even as the per-item checkboxes render alongside it.
   assert.ok(
     body.includes(
       '- [ ] <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit the candidate baselines to this PR (requires write access).',

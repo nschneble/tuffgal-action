@@ -172,6 +172,12 @@ recognized only in the bot's own report comment (it carries a hidden
 can't trigger it, and the bot's own comment refreshes never loop back into an
 approval.
 
+Each new or changed baseline also gets its own **Approve _name_** checkbox. Tick
+individual ones to promote just those baselines and leave the rest pending, or
+tick the master **Approve these baselines** box to take them all. The master box
+wins if both are ticked. (Deleted baselines have no checkbox — they're always
+pruned on approve.)
+
 ### Command: `@tuffgal approve`
 
 Alternatively a maintainer comments `@tuffgal approve` on the PR. The bot
@@ -199,7 +205,9 @@ jobs:
         (github.event.action == 'edited' &&
          contains(github.event.comment.body, 'tuffgal-approve-box') &&
          (contains(github.event.comment.body, '[x] <!-- tuffgal-approve-box') ||
-          contains(github.event.comment.body, '[X] <!-- tuffgal-approve-box')))
+          contains(github.event.comment.body, '[X] <!-- tuffgal-approve-box') ||
+          contains(github.event.comment.body, '[x] <!-- tuffgal-approve-item:') ||
+          contains(github.event.comment.body, '[X] <!-- tuffgal-approve-item:')))
       )
     runs-on: ubuntu-latest
     permissions:
