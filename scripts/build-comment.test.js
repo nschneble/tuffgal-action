@@ -257,6 +257,16 @@ test("deleted stories are listed with newlines flattened", () => {
   assert.match(body, /- multi line name/);
 });
 
+test("a deleted story name with HTML metacharacters is escaped", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "changed",
+    counts: { ...base().counts, deleted: "1", total: "1" },
+    deletedNames: ['a <b> "c"'],
+  });
+  assert.match(body, /- a &lt;b&gt; "c"/);
+});
+
 test("pending work renders the approve CTA and the approve-box marker", () => {
   const body = buildCommentBody({
     ...base(),

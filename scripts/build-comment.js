@@ -233,7 +233,7 @@ function buildCommentBody({
   if (deletedNames.length) {
     lines.push(`### Deleted (${deletedNames.length})`);
     for (const name of deletedNames)
-      lines.push(`- ${String(name).replace(/[\r\n]+/g, " ")}`);
+      lines.push(`- ${escapeHtml(String(name).replace(/[\r\n]+/g, " "))}`);
     lines.push("");
   }
 
