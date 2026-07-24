@@ -68,6 +68,56 @@ function shouldSynthesizeCheck({ pendingTotal, keptCount } = {}) {
   return keptCount === pendingTotal;
 }
 
+// Resolve the run's deleted-baseline count from the ALREADY-PARSED results.json
+// object bundled into the candidates artifact. This is the pure fallback-ladder
+// DECISION only — the JSON.parse / fs.readFileSync / try-catch-on-read stays inline
+// in approve/action.yml's filter step (that is genuine file I/O, not a decision).
+// The count is folded into BOTH the pending and kept totals the shortcut gate
+// consumes (see foldDeletions + shouldSynthesizeCheck), so deletions — which are
+// never candidate action-dirs and always resolve unconditionally under `--prune` —
+// still let a deletion-only run reach a full clear.
+//
+// Fallback order (replicated EXACTLY from the prior inline implementation):
+//   1. Prefer `.totals.deleted` when it is an integer — this is the authoritative
+//      per-run total. Note the guard is `Number.isInteger`, evaluated on the RAW
+//      value: a NON-integer `.totals.deleted` (e.g. 2.5) falls through to step 2,
+//      but a NEGATIVE INTEGER `.totals.deleted` (e.g. -3) is taken as `n` here and
+//      then rejected by the final `n >= 0` guard — it does NOT fall through to the
+//      array, it collapses to 0. This asymmetry is intentional and load-bearing:
+//      the tests pin it.
+//   2. Else fall back to `.deleted.length` when `.deleted` is an array.
+//   3. Else — and whenever the chosen value is not a non-negative integer — 0.
+//   input:  the parsed results.json object (any shape; may be null / malformed).
+//   output: a non-negative integer.
+function parseDeletedCount(results) {
+  const fromTotals = results && results.totals && results.totals.deleted;
+  const fromArray = Array.isArray(results && results.deleted) ? results.deleted.length : undefined;
+  const n = Number.isInteger(fromTotals) ? fromTotals : fromArray;
+  if (Number.isInteger(n) && n >= 0) {
+    return n;
+  }
+  return 0;
+}
+
+// Fold the run's deleted count into BOTH counts the shortcut gate consumes. The
+// symmetry is the whole point: adding the SAME deletedCount to both cancels it out
+// of shouldSynthesizeCheck's strict-equality gate (a deletion can never flip a
+// partial into a full clear) while rescuing the deletion-only full clear where the
+// filter step's candidate-dir count is 0. An asymmetric fold (adding to one but not
+// the other) would silently corrupt the gate — this function exists so a test can
+// assert the symmetry DIRECTLY rather than only through the gate's boolean output.
+//   input:  { candidateCount, promotedCount, deletedCount } — the filter step's
+//           candidate-dir total, this approval's promoted count, and the deleted
+//           count from parseDeletedCount.
+//   output: { pendingTotal: candidateCount + deletedCount,
+//             keptCount:    promotedCount + deletedCount }.
+function foldDeletions({ candidateCount, promotedCount, deletedCount } = {}) {
+  return {
+    pendingTotal: candidateCount + deletedCount,
+    keptCount: promotedCount + deletedCount,
+  };
+}
+
 // Parse the raw `check-name` action input into the list of check-run names to
 // synthesize. The input is a string, optionally comma-separated so a matrix / smoke
 // suite can name one check per job (mirroring the `artifact-name` "set a unique name
@@ -88,4 +138,4 @@ function parseCheckNames(input) {
     .filter((name) => name.length > 0);
 }
 
-module.exports = { shouldSynthesizeCheck, parseCheckNames };
+module.exports = { shouldSynthesizeCheck, parseCheckNames, parseDeletedCount, foldDeletions };

@@ -12,7 +12,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { shouldSynthesizeCheck, parseCheckNames } = require('./check-shortcut.js');
+const {
+  shouldSynthesizeCheck,
+  parseCheckNames,
+  parseDeletedCount,
+  foldDeletions,
+} = require('./check-shortcut.js');
 
 // --- full clear earns the shortcut --------------------------------------- //
 
@@ -84,6 +89,98 @@ test('non-integer / NaN / missing counts → false (garbage never earns the shor
   assert.strictEqual(shouldSynthesizeCheck({ pendingTotal: undefined, keptCount: undefined }), false);
   assert.strictEqual(shouldSynthesizeCheck({}), false);
   assert.strictEqual(shouldSynthesizeCheck(), false);
+});
+
+// --- parseDeletedCount (the deleted-count fallback ladder) --------------- //
+// Directly covers the DECISION logic extracted out of the filter step's inline
+// results.json read. The JSON.parse / readFileSync I/O stays inline in
+// approve/action.yml; this function only decides which field wins. The prior
+// coverage exercised zero of this ladder — a broken fallback order would have
+// shipped green. Each case pins the EXACT current behavior (verified against the
+// pre-extraction inline code), including the subtle negative-vs-non-integer split.
+
+test('parseDeletedCount: valid .totals.deleted is used (authoritative per-run total)', () => {
+  assert.strictEqual(parseDeletedCount({ totals: { deleted: 4 } }), 4);
+});
+
+test('parseDeletedCount: .totals.deleted preferred over the .deleted array length', () => {
+  // Both present and disagree → totals wins (it is the authoritative total).
+  assert.strictEqual(parseDeletedCount({ totals: { deleted: 3 }, deleted: ['a', 'b', 'c', 'd', 'e'] }), 3);
+});
+
+test('parseDeletedCount: .totals.deleted absent → falls back to .deleted array length', () => {
+  assert.strictEqual(parseDeletedCount({ deleted: ['a', 'b', 'c'] }), 3);
+});
+
+test('parseDeletedCount: empty .deleted array → 0', () => {
+  assert.strictEqual(parseDeletedCount({ deleted: [] }), 0);
+});
+
+test('parseDeletedCount: NON-INTEGER .totals.deleted falls through to the .deleted array', () => {
+  // Number.isInteger(2.5) is false, so the ternary picks fromArray → array length.
+  assert.strictEqual(parseDeletedCount({ totals: { deleted: 2.5 }, deleted: ['a', 'b'] }), 2);
+});
+
+test('parseDeletedCount: NEGATIVE-integer .totals.deleted does NOT fall through — it collapses to 0', () => {
+  // Load-bearing asymmetry with the non-integer case above: Number.isInteger(-3) is
+  // TRUE, so the ternary takes n = -3 (it never reaches the array), then the final
+  // `n >= 0` guard rejects it → 0. This mirrors the exact pre-extraction inline
+  // behavior; a naive "negative falls back to the array" reading is WRONG.
+  assert.strictEqual(parseDeletedCount({ totals: { deleted: -3 }, deleted: ['a', 'b'] }), 0);
+});
+
+test('parseDeletedCount: non-integer .totals.deleted with no .deleted array → 0', () => {
+  assert.strictEqual(parseDeletedCount({ totals: { deleted: 2.5 } }), 0);
+});
+
+test('parseDeletedCount: both fields absent → 0', () => {
+  assert.strictEqual(parseDeletedCount({}), 0);
+});
+
+test('parseDeletedCount: malformed / non-array .deleted and no totals → 0', () => {
+  assert.strictEqual(parseDeletedCount({ deleted: 'nope' }), 0);
+  assert.strictEqual(parseDeletedCount({ totals: {}, deleted: 5 }), 0);
+});
+
+test('parseDeletedCount: null / non-object input → 0 (defensive, mirrors JSON.parse("null"))', () => {
+  assert.strictEqual(parseDeletedCount(null), 0);
+  assert.strictEqual(parseDeletedCount(undefined), 0);
+});
+
+// --- foldDeletions (symmetric fold into both gate inputs) ---------------- //
+// The regression this guards is an ASYMMETRIC fold — adding deletedCount to
+// pendingTotal but not keptCount (or vice versa), which would silently corrupt the
+// full-clear gate. The prior coverage only checked the fold's DOWNSTREAM boolean
+// via shouldSynthesizeCheck; these assert BOTH outputs directly, so an asymmetric
+// fold fails HERE regardless of whether the boolean happens to survive.
+
+test('foldDeletions: adds the SAME deletedCount to BOTH pendingTotal and keptCount', () => {
+  assert.deepStrictEqual(foldDeletions({ candidateCount: 2, promotedCount: 1, deletedCount: 3 }), {
+    pendingTotal: 5,
+    keptCount: 4,
+  });
+});
+
+test('foldDeletions: deletion-only run (0 candidate dirs) surfaces the deletions in both counts', () => {
+  assert.deepStrictEqual(foldDeletions({ candidateCount: 0, promotedCount: 0, deletedCount: 2 }), {
+    pendingTotal: 2,
+    keptCount: 2,
+  });
+});
+
+test('foldDeletions: zero deletions is a no-op pass-through of the two counts', () => {
+  assert.deepStrictEqual(foldDeletions({ candidateCount: 3, promotedCount: 2, deletedCount: 0 }), {
+    pendingTotal: 3,
+    keptCount: 2,
+  });
+});
+
+test('foldDeletions: the fold preserves a partial gap (kept < pending) exactly', () => {
+  // 3 changed present, 1 ticked, 2 deletions: the 2-story gap must survive the fold
+  // so shouldSynthesizeCheck still fails closed. Asserts the gap directly.
+  const { pendingTotal, keptCount } = foldDeletions({ candidateCount: 3, promotedCount: 1, deletedCount: 2 });
+  assert.strictEqual(pendingTotal - keptCount, 2);
+  assert.strictEqual(shouldSynthesizeCheck({ pendingTotal, keptCount }), false);
 });
 
 // --- parseCheckNames ----------------------------------------------------- //

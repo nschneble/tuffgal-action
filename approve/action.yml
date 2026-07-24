@@ -356,6 +356,13 @@ runs:
           const { computeCandidateFilter, ACTION_NAME_PATTERN } =
             require(`${process.env.ACTION_PATH}/scripts/filter-candidates.js`);
 
+          // The PURE deleted-count fallback ladder (prefer .totals.deleted, else the
+          // .deleted array length, else 0) lives in the committed, unit-tested
+          // module; only the JSON.parse / readFileSync I/O below stays inline. See
+          // check-shortcut.js and the approve-require-source-lock CI job.
+          const { parseDeletedCount } =
+            require(`${process.env.ACTION_PATH}/scripts/check-shortcut.js`);
+
           const candDir = process.env.CAND_DIR;
           // The gate JSON-encodes the selection ('all' or a string[] of keys); parse
           // it back to the shape resolveApprover produced.
@@ -390,10 +397,7 @@ runs:
           let deletedCount = 0;
           try {
             const results = JSON.parse(fs.readFileSync(path.join(candDir, 'results.json'), 'utf8'));
-            const fromTotals = results && results.totals && results.totals.deleted;
-            const fromArray = Array.isArray(results && results.deleted) ? results.deleted.length : undefined;
-            const n = Number.isInteger(fromTotals) ? fromTotals : fromArray;
-            if (Number.isInteger(n) && n >= 0) deletedCount = n;
+            deletedCount = parseDeletedCount(results);
           } catch (e) {
             core.info(`Could not read deleted count from results.json: ${e.message}`);
           }
@@ -624,7 +628,7 @@ runs:
           // input parses into per-job check names — lives in a committed,
           // unit-tested module. The checks.create side effect stays inline below.
           // See check-shortcut.js and the approve-require-source-lock CI job.
-          const { shouldSynthesizeCheck, parseCheckNames } =
+          const { shouldSynthesizeCheck, parseCheckNames, foldDeletions } =
             require(`${process.env.ACTION_PATH}/scripts/check-shortcut.js`);
 
           const workdir = process.env.WORKDIR || '.';
@@ -759,8 +763,11 @@ runs:
           // DELETED_COUNT degrades fail-safe (deletion-only simply gets no shortcut).
           const checkNames = parseCheckNames(process.env.CHECK_NAME);
           const deletedCount = Number(process.env.DELETED_COUNT);
-          const pendingTotal = Number(process.env.CANDIDATE_COUNT) + deletedCount;
-          const keptCount = Number(process.env.PROMOTED_COUNT) + deletedCount;
+          const { pendingTotal, keptCount } = foldDeletions({
+            candidateCount: Number(process.env.CANDIDATE_COUNT),
+            promotedCount: Number(process.env.PROMOTED_COUNT),
+            deletedCount,
+          });
           const fullClear = shouldSynthesizeCheck({ pendingTotal, keptCount });
           const synthesizedNames = [];
           if (checkNames.length > 0 && fullClear) {
