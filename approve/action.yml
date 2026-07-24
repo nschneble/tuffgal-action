@@ -398,8 +398,8 @@ runs:
           try {
             const results = JSON.parse(fs.readFileSync(path.join(candDir, 'results.json'), 'utf8'));
             deletedCount = parseDeletedCount(results);
-          } catch (e) {
-            core.info(`Could not read deleted count from results.json: ${e.message}`);
+          } catch (error) {
+            core.info(`Could not read deleted count from results.json: ${error.message}`);
           }
           core.setOutput('deleted', String(deletedCount));
 
@@ -842,11 +842,13 @@ runs:
                 'The visual regression check will re-run automatically against the new baselines and should pass.',
               ];
           // When the shortcut fired, tell the maintainer the required check was
-          // marked passing directly on the new commit — so they aren't surprised
-          // that no fresh Playwright run appears for it. Orthogonal to the token
-          // branch above: the shortcut can fire under either token.
+          // marked passing directly on the new commit. Orthogonal to the token
+          // branch above: the shortcut can fire under either token, so the note
+          // adapts — under the default token no fresh Playwright run appears;
+          // under a PAT / App token the push may still trigger one, which also
+          // lands green.
           const checkNote = synthesizedNames.length > 0
-            ? ['', `✅ Marked the required check${synthesizedNames.length > 1 ? 's' : ''} ${synthesizedNames.map((name) => `\`${name}\``).join(', ')} passing directly on the new commit — the promoted tree is byte-identical to the approved run, so no separate Playwright run will show up for it.`]
+            ? ['', `✅ Marked the required check${synthesizedNames.length > 1 ? 's' : ''} ${synthesizedNames.map((name) => `\`${name}\``).join(', ')} passing directly on the new commit — the promoted tree is byte-identical to the approved run.${tokenIsDefault ? ' No separate Playwright run will show up for it.' : ' If you also configured a PAT / App \`token\`, a real Playwright run may still appear separately against the new baselines — that\'s fine; both paths land on green.'}`]
             : [];
           await github.rest.issues.createComment({
             owner, repo, issue_number: Number(process.env.PR_NUMBER),

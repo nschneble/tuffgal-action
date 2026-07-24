@@ -101,9 +101,11 @@ jobs:
 
   # Unit tests for the approve flow's PURE logic — the commit step's path guard,
   # file walk, frame derivation, and deletions set-difference (baseline-tree.js),
-  # the permission-gate trigger/actor resolution (resolve-approver.js), and the
-  # fail-closed candidate-artifact selection (select-candidate.js). The
-  # approve/scripts/*.test.js glob runs all three. No live GitHub run needed; no
+  # the permission-gate trigger/actor resolution (resolve-approver.js), the
+  # fail-closed candidate-artifact selection (select-candidate.js), the
+  # per-baseline candidate filtering (filter-candidates.js), and the re-run
+  # check-shortcut gate + deletion folding (check-shortcut.js). The
+  # approve/scripts/*.test.js glob runs all five. No live GitHub run needed; no
   # deps beyond Node's built-in node:test + node:assert. Also unit-locks the
   # subdir-frame correctness alongside the approve-subdir-frame smoke job below.
   approve-scripts-unit:
@@ -129,7 +131,8 @@ jobs:
   # documented-correct idiom in source for all five approve modules —
   # baseline-tree.js (commit step), resolve-approver.js (permission gate),
   # select-candidate.js (download step), filter-candidates.js (per-baseline
-  # filter step), and check-shortcut.js (also required in the commit step)
+  # filter step), and check-shortcut.js (required in both the filter step, for
+  # the deletion count, and the commit step, for the shortcut gate)
   # — asserting the composite passes its `github.action_path` through the
   # step env as ACTION_PATH and each script requires from that.
   approve-require-source-lock:
