@@ -6,7 +6,9 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
-_Nothing just yet_
+### Added
+
+- `approve` sub-action: `check-name` input synthesizes the named required check(s) as passing on a full-clear approval, skipping the redundant Tuffgal re-run (needs `checks: write`)
 
 ## [v1.4.1] - 2026-07-22
 

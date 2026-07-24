@@ -214,12 +214,14 @@ jobs:
       contents: write # commit baselines to the PR head branch
       pull-requests: write # react + reply on the comment
       actions: read # download the candidates artifact from the PR run
+      checks: write # synthesize the passing required check on a full-clear approve (only if you set check-name)
     steps:
       - uses: nschneble/tuffgal-action/approve@v1
         with:
           working-directory: .
           # artifact-name: tuffgal-candidates # set a unique name per visual job for matrix / smoke suites
           # baselines-path: tuffgal/baselines
+          # check-name: tuffgal # required-check name(s) to mark passing on a full-clear approve (comma-separate per job); needs checks: write
           # git-user-email: tuffgal-bot@users.noreply.github.com
           # git-user-name: tuffgal[bot]
           # node-version: "22"
@@ -256,6 +258,39 @@ clears itself automatically — pass a PAT or GitHub App installation token via 
 pushes with broader identity and reach than the scoped `GITHUB_TOKEN`, so it is
 opt-in. Leave `token` unset to keep the conservative default and kick the check
 by hand.
+
+**Skipping the re-run entirely.** Both options above still run the _real_ visual
+check again — they differ only in whether you kick it by hand or a PAT re-runs it
+for you. A third option skips the re-run altogether. On a **full-clear**
+approval — every pending baseline (new, changed, and deleted) approved at once
+with nothing left outstanding — the commit touches only the baselines directory,
+so a fresh Tuffgal run would reproduce the same result. Rather than pay for that
+redundant run, the action can mark your required check passing directly on the
+new commit.
+
+Enable it by setting the `check-name` input to your required check's exact name
+(the one that appears in the PR's checks list) and adding `checks: write` to the
+approve job's `permissions:` — both are shown, commented, in the workflow above.
+For a matrix or smoke suite that gates on several checks, comma-separate one name
+per job (mirroring `artifact-name`). Left empty — the default — nothing changes
+and the check re-runs (or waits to be kicked) exactly as above.
+
+The synthesized check is honest about what it is: its summary on GitHub reads
+"No Playwright run backs this status; it is a synthesized shortcut for the
+required check" and names the commit whose baselines were approved. It reports
+success because the promoted tree is byte-identical to the run that captured the
+candidates, not because anything re-ran.
+
+It fires **only** on a full clear. A partial approve — ticking some story boxes
+and leaving others pending — never synthesizes a check; the required check keeps
+whatever state it already had, so the still-pending baselines stay gated behind a
+real run.
+
+The shortcut is orthogonal to the token choice above. It works with the default
+`GITHUB_TOKEN` or a PAT / App token, because it writes the check result directly
+via GitHub's Checks API rather than relying on the commit to trigger a workflow.
+Mix and match: the shortcut alone (skip the re-run on full clears), a PAT alone
+(let real re-runs clear themselves), both, or neither.
 
 **Security model.** The approve job is deliberately conservative:
 
