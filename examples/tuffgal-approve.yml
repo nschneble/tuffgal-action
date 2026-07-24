@@ -40,12 +40,14 @@ jobs:
       contents: write # commit baselines to the PR head branch
       pull-requests: write # react + reply on the comment
       actions: read # download the candidates artifact from the PR run
+      checks: write # synthesize the passing required check on a full-clear approve (only if you set check-name)
     steps:
       - uses: nschneble/tuffgal-action/approve@v1
         with:
           working-directory: .
           # artifact-name: tuffgal-candidates # set a unique name per visual job for matrix / smoke suites
           # baselines-path: tuffgal/baselines
+          # check-name: tuffgal # required-check name(s) to mark passing on a full-clear approve (comma-separate per job); needs checks: write
           # git-user-email: tuffgal-bot@users.noreply.github.com
           # git-user-name: tuffgal[bot]
           # node-version: "22"

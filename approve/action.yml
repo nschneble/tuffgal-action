@@ -22,6 +22,10 @@ inputs:
     description: Path to the baselines directory (must match `paths.baselines` in tuffgal.config.ts). Commits are strictly scoped to this directory.
     required: false
     default: "tuffgal/baselines"
+  check-name:
+    description: Name(s) of the required status check(s) to synthesize as passing on a FULL-clear approval, so a consumer's required check clears without a real Tuffgal re-run. Comma-separate one name per job for matrix / smoke suites (mirroring `artifact-name`'s per-job convention). The approve step only commits `baselines-path`, so a full-clear commit is byte-identical to the run that captured the candidates and re-execution is redundant. A partial approve never synthesizes (the required rerun still gates the unreviewed diffs). Empty (the default) disables the feature and today's manual-rerun behavior is unchanged. Requires the workflow to grant the `checks` write permission.
+    required: false
+    default: ""
   git-user-email:
     description: Email used for the baseline commit author/committer.
     required: false
@@ -522,6 +526,17 @@ runs:
     #    maintainer how to kick it; supplying a PAT / App token makes the  #
     #    check re-run automatically. TOKEN_IS_DEFAULT carries that fact    #
     #    into the script without exposing the token value.                #
+    #                                                                     #
+    #    Re-run shortcut: after the ref fast-forwards to the NEW commit,   #
+    #    if a `check-name` is configured AND this approval was a FULL      #
+    #    clear (every pending candidate promoted — the pure                #
+    #    shouldSynthesizeCheck gate over the filter step's kept/total),    #
+    #    synthesize a passing Check Run on that new SHA per named check.    #
+    #    The committed tree is byte-identical to the captured run, so the  #
+    #    rerun is provably redundant. Fail-closed on a partial approve.    #
+    #    checks.create failure degrades gracefully (a missing              #
+    #    `checks: write` is an expected not-configured state → notice; any #
+    #    other error → warning) and never fails the job.                  #
     # ------------------------------------------------------------------ #
     - name: Commit baselines to PR head branch
       if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
@@ -545,6 +560,11 @@ runs:
         IS_PARTIAL: ${{ steps.filter.outputs.partial }}
         PROMOTED_COUNT: ${{ steps.filter.outputs.kept }}
         CANDIDATE_COUNT: ${{ steps.filter.outputs.total }}
+        # Required-check name(s) to synthesize as passing on a full-clear approval
+        # (empty disables the shortcut). Read via env — a nested github-script step
+        # cannot read inputs.* directly. PROMOTED_COUNT / CANDIDATE_COUNT above are
+        # the keptCount / pendingTotal the shortcut's full-clear gate consumes.
+        CHECK_NAME: ${{ inputs.check-name }}
         # This composite's own action dir. `github.action_path` is only supported
         # in composite actions and is evaluated HERE in the composite's context;
         # it is NOT the same as `GITHUB_ACTION_PATH` inside the nested github-
@@ -569,6 +589,14 @@ runs:
           // `approve-scripts-unit` CI job.
           const { walk, toRepoPath, computeDeletions, deriveFrames, BaselineScopeError } =
             require(`${process.env.ACTION_PATH}/scripts/baseline-tree.js`);
+
+          // The PURE re-run-shortcut decision — whether this approval was a full
+          // clear that earns a synthesized passing check, and how the `check-name`
+          // input parses into per-job check names — lives in a committed,
+          // unit-tested module. The checks.create side effect stays inline below.
+          // See check-shortcut.js and the approve-require-source-lock CI job.
+          const { shouldSynthesizeCheck, parseCheckNames } =
+            require(`${process.env.ACTION_PATH}/scripts/check-shortcut.js`);
 
           const workdir = process.env.WORKDIR || '.';
           const baselinesRel = process.env.BASELINES_PATH;              // working-directory-relative (matches the input contract)
@@ -679,6 +707,53 @@ runs:
             owner, repo, comment_id: Number(process.env.COMMENT_ID), content: 'rocket',
           });
 
+          // Re-run shortcut. We are here ONLY because a real commit landed and the
+          // ref fast-forwarded (tree.length === 0 returned early; an updateRef
+          // failure returned above), so commit.data.sha is a genuine new SHA. If a
+          // `check-name` is configured and this approval was a FULL clear, mark that
+          // required check passing directly on the new SHA — the committed tree is
+          // byte-identical to the run that captured the candidates, so the rerun is
+          // redundant. The pure module owns both decisions; a partial approve or an
+          // empty check-name yields no check. env counts are strings, so coerce with
+          // Number — the module fail-closes NaN / non-integer input.
+          const checkNames = parseCheckNames(process.env.CHECK_NAME);
+          const fullClear = shouldSynthesizeCheck({
+            pendingTotal: Number(process.env.CANDIDATE_COUNT),
+            keptCount: Number(process.env.PROMOTED_COUNT),
+          });
+          let synthesizedNames = [];
+          if (checkNames.length > 0 && fullClear) {
+            const total = Number(process.env.CANDIDATE_COUNT);
+            const shortSha = commit.data.sha.slice(0, 7);
+            const summary = [
+              `This check was marked passing without re-running Tuffgal. All ${total} previously-pending baseline(s) (new / changed / deleted) were approved and promoted directly to baselines in commit \`${shortSha}\`, and the approve step touches only \`${baselinesRel}\` — no source code changed since the run that captured them, so re-execution would reproduce the same result.`,
+              '',
+              'No Playwright run backs this status; it is a synthesized shortcut for the required check.',
+            ].join('\n');
+            for (const name of checkNames) {
+              try {
+                await github.rest.checks.create({
+                  owner, repo, name,
+                  head_sha: commit.data.sha,
+                  status: 'completed',
+                  conclusion: 'success',
+                  output: { title: 'Baselines approved (synthesized check)', summary },
+                });
+                synthesizedNames.push(name);
+              } catch (error) {
+                // A 403 is the expected not-configured state — the consumer's
+                // workflow simply hasn't granted `checks: write`. Note it (nothing
+                // is wrong; the shortcut is opt-in). Anything else is unexpected →
+                // warn. Never fail the job: the baselines are already committed.
+                if (error.status === 403) {
+                  core.notice(`Skipped synthesizing check \`${name}\`: the workflow lacks \`checks: write\` permission. Grant it to enable the re-run shortcut.`);
+                } else {
+                  core.warning(`Could not synthesize check \`${name}\`: ${error.message}`);
+                }
+              }
+            }
+          }
+
           // Whether the commit was made with the default GITHUB_TOKEN. GitHub
           // does not fire workflows for GITHUB_TOKEN pushes (recursion
           // prevention), so with the default token the visual check will NOT
@@ -710,7 +785,14 @@ runs:
                 '',
                 'The visual regression check will re-run automatically against the new baselines and should pass.',
               ];
+          // When the shortcut fired, tell the maintainer the required check was
+          // marked passing directly on the new commit — so they aren't surprised
+          // that no fresh Playwright run appears for it. Orthogonal to the token
+          // branch above: the shortcut can fire under either token.
+          const checkNote = synthesizedNames.length > 0
+            ? ['', `✅ Marked the required check${synthesizedNames.length > 1 ? 's' : ''} ${synthesizedNames.map((name) => `\`${name}\``).join(', ')} passing directly on the new commit — the promoted tree is byte-identical to the approved run, so no separate Playwright run will show up for it.`]
+            : [];
           await github.rest.issues.createComment({
             owner, repo, issue_number: Number(process.env.PR_NUMBER),
-            body: ['<!-- tuffgal-approve -->', committed, ...partialNote, ...tail].join('\n'),
+            body: ['<!-- tuffgal-approve -->', committed, ...partialNote, ...tail, ...checkNote].join('\n'),
           });
