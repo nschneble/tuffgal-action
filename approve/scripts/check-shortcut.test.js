@@ -22,6 +22,28 @@ test('full clear (keptCount === pendingTotal, pendingTotal > 0) → true', () =>
   assert.strictEqual(shouldSynthesizeCheck({ pendingTotal: 7, keptCount: 7 }), true);
 });
 
+// --- deletion-folded counting (approve flow wiring semantics) ------------ //
+// Deletions are not candidate action-dirs, so the filter step's `total`/`kept`
+// never count them; `tuffgal approve --prune` resolves them unconditionally on
+// any approve trigger. The commit step folds the run's deleted count into BOTH
+// pendingTotal and keptCount before calling this gate. These cases pin that the
+// folded numbers behave correctly — the module still only compares two integers.
+
+test('deletion-only full clear (0 candidate dirs + N deleted folded into both) → true', () => {
+  // 0 new/changed present + 2 deletions → pendingTotal 0+2, keptCount 0+2.
+  assert.strictEqual(shouldSynthesizeCheck({ pendingTotal: 2, keptCount: 2 }), true);
+});
+
+test('full clear with deletions (2 changed + 3 deleted folded into both) → true', () => {
+  assert.strictEqual(shouldSynthesizeCheck({ pendingTotal: 5, keptCount: 5 }), true);
+});
+
+test('partial approve WITH deletions still fails closed (deleted count cancels out)', () => {
+  // 3 changed present, 1 ticked, 2 deletions folded: pendingTotal 3+2, keptCount 1+2.
+  // The two unreviewed changed stories keep pendingTotal > keptCount → no shortcut.
+  assert.strictEqual(shouldSynthesizeCheck({ pendingTotal: 5, keptCount: 3 }), false);
+});
+
 // --- partial approve MUST fail closed (SECURITY-CRITICAL) ---------------- //
 // A false positive here fabricates a green required check while stories still await
 // review. This is the load-bearing direction — reverting the strict-equality gate

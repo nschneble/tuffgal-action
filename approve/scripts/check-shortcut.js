@@ -28,12 +28,23 @@
 //   input:
 //     - pendingTotal: how many stories were new / changed / deleted in the captured
 //                     run (new + changed + deleted from that run's results.json
-//                     totals). In the approve flow this is the `total` output of the
-//                     "Filter candidates to selection" step — the count of candidate
-//                     action-dirs physically present in the extracted tree.
+//                     totals). In the approve flow the caller builds this as the
+//                     `total` output of the "Filter candidates to selection" step
+//                     (candidate action-dirs physically present in the extracted
+//                     tree — the new + changed set) PLUS the run's deleted count read
+//                     from the bundled results.json. Deletions are not candidate
+//                     dirs, so they never appear in `total`; folding the deleted
+//                     count in here (and equally into keptCount) is what lets a
+//                     deletion-only full clear reach pendingTotal > 0.
 //     - keptCount:    how many of those THIS approval actually promoted. In the
-//                     approve flow this is the filter step's `kept` output (the
-//                     length of computeCandidateFilter's `keep` partition).
+//                     approve flow the caller builds this as the filter step's `kept`
+//                     output (the length of computeCandidateFilter's `keep`
+//                     partition) PLUS the SAME deleted count. `tuffgal approve
+//                     --prune` resolves deletions unconditionally on any approve
+//                     trigger (they are never gated by the per-item selection), so a
+//                     deletion always counts as promoted. Adding the deleted count to
+//                     both inputs cancels it out of the strict-equality gate — it can
+//                     never flip a partial (kept < total) into a full clear.
 //   output: boolean.
 //     - true  → a FULL clear: keptCount === pendingTotal AND pendingTotal > 0.
 //     - false → a partial approve (keptCount < pendingTotal), an approve with

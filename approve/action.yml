@@ -23,7 +23,7 @@ inputs:
     required: false
     default: "tuffgal/baselines"
   check-name:
-    description: Name(s) of the required status check(s) to synthesize as passing on a FULL-clear approval, so a consumer's required check clears without a real Tuffgal re-run. Comma-separate one name per job for matrix / smoke suites (mirroring `artifact-name`'s per-job convention). The approve step only commits `baselines-path`, so a full-clear commit is byte-identical to the run that captured the candidates and re-execution is redundant. A partial approve never synthesizes (the required rerun still gates the unreviewed diffs). Empty (the default) disables the feature and today's manual-rerun behavior is unchanged. Requires the workflow to grant the `checks` write permission.
+    description: "Name(s) of the required status check(s) to synthesize as passing on a FULL-clear approval, so a consumer's required check clears without a real Tuffgal re-run. Comma-separate one name per job for matrix / smoke suites (mirroring `artifact-name`'s per-job convention). The approve step only commits `baselines-path`, so a full-clear commit is byte-identical to the run that captured the candidates and re-execution is redundant. A partial approve never synthesizes (the required rerun still gates the unreviewed diffs). Empty (the default) disables the feature and today's manual-rerun behavior is unchanged. Requires the workflow to grant `checks: write` permission."
     required: false
     default: ""
   git-user-email:
@@ -375,6 +375,30 @@ runs:
           core.setOutput('kept', String(keep.length));
           core.setOutput('total', String(presentDirNames.length));
 
+          // The run's deleted-baseline count, read from the results.json bundled
+          // into the candidates artifact (main action.yml's "Assemble candidates
+          // artifact" step). Deletions are NOT candidate action-dirs, so they never
+          // appear in presentDirNames / `total` above — yet `tuffgal approve
+          // --prune` resolves them UNCONDITIONALLY on any approve trigger (they are
+          // never gated by the per-item selection). The commit step folds this into
+          // BOTH the kept and pending totals the check-shortcut gate consumes, so a
+          // deletion-only full clear (0 candidate dirs, N deletions) still earns the
+          // shortcut and the count cancels out on a partial. Prefer the authoritative
+          // `.totals.deleted`; fall back to the `.deleted` array length. Defaults to
+          // 0 (fail-safe: a deletion-only run simply doesn't get the shortcut) if the
+          // bundled results.json is missing or unreadable.
+          let deletedCount = 0;
+          try {
+            const results = JSON.parse(fs.readFileSync(path.join(candDir, 'results.json'), 'utf8'));
+            const fromTotals = results && results.totals && results.totals.deleted;
+            const fromArray = Array.isArray(results && results.deleted) ? results.deleted.length : undefined;
+            const n = Number.isInteger(fromTotals) ? fromTotals : fromArray;
+            if (Number.isInteger(n) && n >= 0) deletedCount = n;
+          } catch (e) {
+            core.info(`Could not read deleted count from results.json: ${e.message}`);
+          }
+          core.setOutput('deleted', String(deletedCount));
+
           if (selection === 'all') {
             // Strict no-op: nothing is removed, the tree stays byte-identical to
             // today's unconditional promote.
@@ -531,7 +555,7 @@ runs:
     #    if a `check-name` is configured AND this approval was a FULL      #
     #    clear (every pending candidate promoted — the pure                #
     #    shouldSynthesizeCheck gate over the filter step's kept/total),    #
-    #    synthesize a passing Check Run on that new SHA per named check.    #
+    #    synthesize a passing Check Run on that new SHA per named check.   #
     #    The committed tree is byte-identical to the captured run, so the  #
     #    rerun is provably redundant. Fail-closed on a partial approve.    #
     #    checks.create failure degrades gracefully (a missing              #
@@ -560,6 +584,11 @@ runs:
         IS_PARTIAL: ${{ steps.filter.outputs.partial }}
         PROMOTED_COUNT: ${{ steps.filter.outputs.kept }}
         CANDIDATE_COUNT: ${{ steps.filter.outputs.total }}
+        # The run's deleted-baseline count (from the bundled results.json). Deletions
+        # always resolve on any approve trigger (`--prune` is unconditional), so the
+        # script folds this into BOTH keptCount and pendingTotal below — letting a
+        # deletion-only full clear earn the shortcut while cancelling out on a partial.
+        DELETED_COUNT: ${{ steps.filter.outputs.deleted }}
         # Required-check name(s) to synthesize as passing on a full-clear approval
         # (empty disables the shortcut). Read via env — a nested github-script step
         # cannot read inputs.* directly. PROMOTED_COUNT / CANDIDATE_COUNT above are
@@ -707,6 +736,10 @@ runs:
             owner, repo, comment_id: Number(process.env.COMMENT_ID), content: 'rocket',
           });
 
+          // Short SHA of the new commit, reused by the synthesized-check summary and
+          // the success comment's commit link below.
+          const shortSha = commit.data.sha.slice(0, 7);
+
           // Re-run shortcut. We are here ONLY because a real commit landed and the
           // ref fast-forwarded (tree.length === 0 returned early; an updateRef
           // failure returned above), so commit.data.sha is a genuine new SHA. If a
@@ -716,17 +749,23 @@ runs:
           // redundant. The pure module owns both decisions; a partial approve or an
           // empty check-name yields no check. env counts are strings, so coerce with
           // Number — the module fail-closes NaN / non-integer input.
+          //
+          // Deletions always resolve on ANY approve trigger (`--prune` is
+          // unconditional; they are never gated by the per-item selection), so the
+          // run's deleted count is folded into BOTH keptCount and pendingTotal: it
+          // cancels out in the strict-equality gate (can never flip a partial into a
+          // full clear) and rescues the deletion-only full clear where the filter
+          // step's candidate-dir count is 0. Number('') === 0, so a missing
+          // DELETED_COUNT degrades fail-safe (deletion-only simply gets no shortcut).
           const checkNames = parseCheckNames(process.env.CHECK_NAME);
-          const fullClear = shouldSynthesizeCheck({
-            pendingTotal: Number(process.env.CANDIDATE_COUNT),
-            keptCount: Number(process.env.PROMOTED_COUNT),
-          });
-          let synthesizedNames = [];
+          const deletedCount = Number(process.env.DELETED_COUNT);
+          const pendingTotal = Number(process.env.CANDIDATE_COUNT) + deletedCount;
+          const keptCount = Number(process.env.PROMOTED_COUNT) + deletedCount;
+          const fullClear = shouldSynthesizeCheck({ pendingTotal, keptCount });
+          const synthesizedNames = [];
           if (checkNames.length > 0 && fullClear) {
-            const total = Number(process.env.CANDIDATE_COUNT);
-            const shortSha = commit.data.sha.slice(0, 7);
             const summary = [
-              `This check was marked passing without re-running Tuffgal. All ${total} previously-pending baseline(s) (new / changed / deleted) were approved and promoted directly to baselines in commit \`${shortSha}\`, and the approve step touches only \`${baselinesRel}\` — no source code changed since the run that captured them, so re-execution would reproduce the same result.`,
+              `This check was marked passing without re-running Tuffgal. All ${pendingTotal} previously-pending baseline(s) (new / changed / deleted) were approved and promoted directly to baselines in commit \`${shortSha}\`, and the approve step touches only \`${baselinesRel}\` — no source code changed since the run that captured them, so re-execution would reproduce the same result.`,
               '',
               'No Playwright run backs this status; it is a synthesized shortcut for the required check.',
             ].join('\n');
@@ -760,7 +799,7 @@ runs:
           // re-run on its own — tell the maintainer how to kick it. A custom
           // PAT / App token pushes like a normal user, so the check re-runs.
           const tokenIsDefault = process.env.TOKEN_IS_DEFAULT === 'true';
-          const committed = `🚀 Committed candidate baselines to \`${headRef}\` as [\`${commit.data.sha.slice(0, 7)}\`](${context.serverUrl}/${owner}/${repo}/commit/${commit.data.sha}).`;
+          const committed = `🚀 Committed candidate baselines to \`${headRef}\` as [\`${shortSha}\`](${context.serverUrl}/${owner}/${repo}/commit/${commit.data.sha}).`;
 
           // On a partial per-item approve, name how many of the run's candidate
           // baselines were promoted. A full approve ('all' via a mention or the
@@ -770,7 +809,17 @@ runs:
           const partialNote = isPartial
             ? ['', `Promoted ${process.env.PROMOTED_COUNT} of ${process.env.CANDIDATE_COUNT} candidate baselines (partial approve).`]
             : [];
-          const tail = tokenIsDefault
+          // The retrigger / auto-rerun tail describes how the REAL visual check
+          // clears. When the shortcut fired (synthesizedNames.length > 0) the required
+          // check was already marked passing on this very commit, so neither branch
+          // applies — the default-token "kick it, the check won't re-run" text would
+          // flatly contradict the checkNote's "already marked passing" below. Suppress
+          // the tail in that case and let checkNote be the single source of truth on
+          // the check's state.
+          const shortcutFired = synthesizedNames.length > 0;
+          const tail = shortcutFired
+            ? []
+            : tokenIsDefault
             ? [
                 '',
                 '⚠️ The visual regression check will **not** re-run on its own — GitHub does not trigger workflows for commits pushed with `GITHUB_TOKEN`. Kick it with any of:',

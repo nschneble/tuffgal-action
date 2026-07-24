@@ -129,9 +129,9 @@ jobs:
   # documented-correct idiom in source for all five approve modules —
   # baseline-tree.js (commit step), resolve-approver.js (permission gate),
   # select-candidate.js (download step), filter-candidates.js (per-baseline
-  # filter step), and check-shortcut.js (also required in the commit step) — asserting the
-  # composite passes its `github.action_path` through the step env as
-  # ACTION_PATH and each script requires from that.
+  # filter step), and check-shortcut.js (also required in the commit step)
+  # — asserting the composite passes its `github.action_path` through the
+  # step env as ACTION_PATH and each script requires from that.
   approve-require-source-lock:
     runs-on: ubuntu-latest
     steps:
