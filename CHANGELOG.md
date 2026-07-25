@@ -6,9 +6,14 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+_Nothing just yet_
+
+## [v1.5.0] - 2026-07-24
+
 ### Added
 
-- `approve` sub-action: `check-name` input synthesizes the named required check(s) as passing on a full-clear approval, skipping the redundant Tuffgal re-run (needs `checks: write`)
+GH CI now skips the redundant Tuffgal re-run after a full baseline
+approval.
 
 ## [v1.4.1] - 2026-07-22
 
@@ -200,7 +205,8 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.5.0...HEAD
+[v1.5.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.5.0
 [v1.4.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.4.1
 [v1.4.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.4.0
 [v1.3.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.3.0
