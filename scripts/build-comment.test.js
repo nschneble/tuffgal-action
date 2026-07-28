@@ -332,6 +332,21 @@ test("pending work renders the approve CTA and the approve-box marker", () => {
   assert.match(body, /@tuffgal approve/);
 });
 
+test("a deletion-only run (no changed/new) still renders the approve CTA", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "changed",
+    counts: { ...base().counts, deleted: "1", total: "1" },
+    deleted: [{ name: "old-footer", breakpoints: [] }],
+  });
+  // `pending` gates the CTA on new + changed + deleted > 0. A regression that
+  // dropped `deleted` from that formula would silently hide approval for a
+  // deletion-only run — so pin that deleted alone still renders both the CTA
+  // heading and the approve-box marker.
+  assert.match(body, /### Approve these changes/);
+  assert.match(body, /<!-- tuffgal-approve-box -->/);
+});
+
 test("a short-circuited run renders a compact body with NEITHER approve marker", () => {
   const body = buildCommentBody({
     shortCircuit: { sha: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0" },
@@ -775,12 +790,12 @@ test("a story name with HTML metacharacters is escaped in its per-item checkbox"
 // ---------------------------------------------------------------------------
 // Single-breakpoint parity — the common case. A single-config run (one shot per
 // entry, no `breakpoint`, multiBreakpoint false) must render byte-for-byte the
-// same body as the pre-breakpoint (Wave-1) builder did. The golden fixture was
-// generated from the Wave-1 module against an equivalent flat-shape fixture, so
-// this locks the whole single-breakpoint surface — banner, tables, deleted,
-// failed, approve CTA — against any drift.
+// same body as the pre-breakpoint (single-shot) builder did. The golden fixture
+// was generated from the single-representative-shot builder against an
+// equivalent flat-shape fixture, so this locks the whole single-breakpoint
+// surface — banner, tables, deleted, failed, approve CTA — against any drift.
 // ---------------------------------------------------------------------------
-test("a single-breakpoint run renders byte-for-byte identical to the Wave-1 output", () => {
+test("a single-breakpoint run renders byte-for-byte identical to the pre-breakpoint output", () => {
   const body = buildCommentBody({
     outcome: "changed",
     counts: {
@@ -826,7 +841,7 @@ test("a single-breakpoint run renders byte-for-byte identical to the Wave-1 outp
     runUrl: "https://github.com/o/r/actions/runs/1",
   });
   const golden = fs.readFileSync(
-    path.join(__dirname, "build-comment.wave1-parity.txt"),
+    path.join(__dirname, "build-comment.single-breakpoint-parity.txt"),
     "utf8"
   );
   assert.strictEqual(body, golden);

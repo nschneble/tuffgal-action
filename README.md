@@ -125,17 +125,18 @@ contract the CI-owned-baselines model asks of a consumer.
 
 ## Outputs
 
-| Name           | Description                                                                                                                                                                    |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `changed`      | Number of stories whose committed baseline changed (pixels or a11y snapshot)                                                                                                   |
-| `deleted`      | Number of orphaned baseline entries with no matching story/action (pruned on approve)                                                                                          |
-| `env-mismatch` | `'true'` when the capture environment in `baselines/manifest.json` no longer matches this CI run (expect a full re-approve)                                                    |
-| `failed`       | Number of stories that failed                                                                                                                                                  |
-| `new`          | Number of stories with no committed baseline yet (candidate written)                                                                                                           |
-| `outcome`      | One of `pass`, `changed` (pending new/changed/deleted review), `env-mismatch`, `failed`, or `no-results`                                                                       |
-| `passed`       | Number of stories that passed                                                                                                                                                  |
-| `preview-url`  | Base URL of the per-PR Pages preview (e.g. `https://owner.github.io/repo/pr-41`), or empty when the preview was off/skipped/failed. Append `/report/index.html` for the report |
-| `total`        | Total stories executed                                                                                                                                                         |
+| Name              | Description                                                                                                                                                                         |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `changed`         | Number of stories whose committed baseline changed (pixels or a11y snapshot)                                                                                                        |
+| `deleted`         | Number of orphaned baseline entries with no matching story/action (pruned on approve)                                                                                               |
+| `env-mismatch`    | `'true'` when the capture environment in `baselines/manifest.json` no longer matches this CI run (expect a full re-approve)                                                         |
+| `failed`          | Number of stories that failed                                                                                                                                                       |
+| `new`             | Number of stories with no committed baseline yet (candidate written)                                                                                                                |
+| `outcome`         | One of `pass`, `changed` (pending new/changed/deleted review), `env-mismatch`, `failed`, or `no-results`                                                                            |
+| `passed`          | Number of stories that passed                                                                                                                                                       |
+| `preview-url`     | Base URL of the per-PR Pages preview (e.g. `https://owner.github.io/repo/pr-41`), or empty when the preview was off/skipped/failed. Append `/report/index.html` for the report      |
+| `short-circuited` | `'true'` when the visual suite was skipped because the triggering commit only promotes already-approved baselines (a same-repo full-approval commit); `'false'` on every normal run |
+| `total`           | Total stories executed                                                                                                                                                              |
 
 `outcome` follows Tuffgal's exit-code precedence: `failed` (broken stories) >
 `env-mismatch` (capture environment changed) > `changed` (pending visual
@@ -146,10 +147,11 @@ review) > `pass`.
 On a PR event, a fast pre-check runs first: it inspects the head commit, and if
 that commit is a same-repo **full-approval** commit that only promotes
 already-approved baselines (a `Tuffgal-Full-Approval` trailer, a single matching
-parent, and a diff confined to `baselines-path`), the action skips steps 1–6
-entirely and reports `outcome=pass` with `short-circuited: true` — the promoted
-tree is byte-identical to the run that was already approved, so re-running it
-would reproduce the same result. Anything ambiguous (a fork PR, a merge commit, a
+parent, and a diff confined to `baselines-path`), the action skips the setup and
+Tuffgal-run steps below (setup-node through `tuffgal run`); the parse step then
+reports `outcome=pass` with `short-circuited: true` — the promoted tree is
+byte-identical to the run that was already approved, so re-running it would
+reproduce the same result. Anything ambiguous (a fork PR, a merge commit, a
 commit that also touches source, an API error) falls through to the normal run
 below. Otherwise:
 
@@ -300,7 +302,8 @@ The shortcut is orthogonal to the token choice above. It works with the default
 `GITHUB_TOKEN` or a PAT / App token, because it writes the check result directly
 via GitHub's Checks API rather than relying on the commit to trigger a workflow.
 Mix and match: the shortcut alone (skip the re-run on full clears), a PAT alone
-(let real re-runs clear themselves), both, or neither.
+(a full clear short-circuits fast; only a partial approve triggers a real re-run
+that clears itself — see "The PAT path skips too" below), both, or neither.
 
 **The PAT path skips too.** The synthesized check above (from v1.5.0) only ever
 helped the default-`GITHUB_TOKEN` path — where the approval push fires no workflow

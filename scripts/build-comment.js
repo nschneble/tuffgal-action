@@ -221,7 +221,7 @@ function buildCommentBody({
   shortCircuit,
 }) {
   // Short-circuit: skip the full totals/sections layout entirely. Deliberately
-  // emits neither the master `tuffgal-approve-box` nor any per-item
+  // emits neither the top-level `tuffgal-approve-box` nor any per-item
   // `tuffgal-approve-item:` marker — a stray marker on a nothing-pending comment
   // could be mistaken for something tickable.
   if (shortCircuit) {
@@ -396,7 +396,7 @@ function buildCommentBody({
       const link = storyLink(entry);
       let line = `- **${escapeHtml(entry.name)}**`;
       // In multi-breakpoint mode, name which breakpoint failed right after the
-      // story name; single-breakpoint mode stays label-free (Wave-1 output).
+      // story name; single-breakpoint mode stays label-free (pre-breakpoint output).
       if (multiBreakpoint && entry.breakpoint) {
         line += ` (${escapeHtml(entry.breakpoint)})`;
       }

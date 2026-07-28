@@ -61,6 +61,21 @@ test("a subdirectory working-directory full approval skips", () => {
   assert.strictEqual(result.skip, true);
 });
 
+// The writer (approve/action.yml) stamps a full-clear approval commit with this
+// EXACT message template. Copied byte-for-byte from that template — a blank line,
+// then `Tuffgal-Full-Approval: <sha>` — and NOT reconstructed from the TRAILER
+// constant, so a format drift on the writer side (a dropped blank line, a missing
+// space after the colon, a reworded subject) surfaces here as a real failing test
+// instead of silently disabling the whole skip feature. The source-lock CI job
+// only substring-greps the trailer literal; this round-trip pins the surrounding
+// message shape the reader's anchored regex depends on.
+test("the writer's exact commit-message template round-trips through the reader", () => {
+  const headSha = SHA;
+  const message = `chore(tuffgal): approve candidate baselines\n\nTuffgal-Full-Approval: ${headSha}`;
+  const result = decideRunSkip(valid({ message, parentShas: [headSha] }));
+  assert.strictEqual(result.skip, true);
+});
+
 // ---- reject: every way the commit could be lying / malformed / ambiguous ---
 
 test("a partial approve (single-line message, no trailer) does not skip", () => {
@@ -108,6 +123,19 @@ test("a commit touching a file outside the baselines prefix does not skip", () =
         { path: "src/index.ts" },
       ],
     })
+  );
+  assert.strictEqual(result.skip, false);
+});
+
+// Pins the `prefix + "/"` boundary specifically: a sibling directory that SHARES
+// the baselines prefix as a raw string (`tuffgal/baselines-backup/` vs the
+// `tuffgal/baselines` prefix) would pass a naive `startsWith(prefix)`. The reader
+// appends `"/"` before the check, so this sibling correctly stays out of scope
+// and the commit does NOT short-circuit. Distinct from the `src/index.ts` case
+// above, which fails the check whether or not the trailing slash is present.
+test("a sibling directory sharing the baselines prefix does not skip (trailing-slash boundary)", () => {
+  const result = decideRunSkip(
+    valid({ files: [{ path: "tuffgal/baselines-backup/x.png" }] })
   );
   assert.strictEqual(result.skip, false);
 });
