@@ -169,32 +169,58 @@ jobs:
           done
 
   # Source lock for the Tuffgal-Full-Approval commit trailer — a hand-duplicated
-  # cross-package contract. approve/action.yml (WRITER) stamps the trailer onto a
-  # full-clear approval commit; scripts/run-skip.js (READER, in the MAIN action)
-  # greps for the byte-identical literal to decide whether to skip a redundant
-  # rerun. The two live in separate action packages that cannot cross-require, so
-  # nothing but this job keeps the literal in step — a drift on either side
-  # silently breaks the skip (fail-safe: the suite just reruns) with no unit test
-  # to catch it, since the writer only runs on a live approval and the reader only
-  # on a live PR whose head carries the trailer.
+  # cross-package contract. approve/action.yml (WRITER) stamps the trailer LINE
+  # `Tuffgal-Full-Approval: <sha>` onto a full-clear approval commit;
+  # scripts/run-skip.js (READER, in the MAIN action) matches it with the anchored
+  # regex `^Tuffgal-Full-Approval: ([0-9a-f]{40})$` (m-flag) to decide whether to
+  # skip a redundant rerun. The two live in separate action packages that cannot
+  # cross-require, so nothing but this job keeps them in step — a drift in the
+  # load-bearing colon+space shape on either side silently breaks the skip
+  # (fail-safe: the suite just reruns) with no unit test to catch the CROSS-FILE
+  # break, since the writer only runs on a live approval and the reader only on a
+  # live PR whose head carries the trailer. The character that actually gates the
+  # regex match is the SPACE after the colon; the blank line before the trailer is
+  # NOT load-bearing (the m-flag anchors `^` after any single \n), so this job pins
+  # the colon+space, not the blank line — and pins it in the form EACH side spells
+  # it, since the writer emits the line inline while the reader interpolates TRAILER.
   approve-trailer-source-lock:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Full-approval trailer literal matches on both sides (source lock)
+      - name: Full-approval trailer colon+space matches on both sides (source lock)
         shell: bash
         run: |
           set -euo pipefail
-          trailer='Tuffgal-Full-Approval:'
-          if ! grep -Fq "$trailer" approve/action.yml; then
-            echo "approve/action.yml (writer) must stamp the '$trailer' trailer on a full-clear approval commit." >&2
+          # A bare `Tuffgal-Full-Approval:` substring grep is too weak: it stays
+          # green even if the writer emitted `Tuffgal-Full-Approval:<sha>` (no
+          # space), which the reader's regex would silently stop matching. Pin the
+          # colon+space shape on each side, in the form that side actually spells.
+
+          # WRITER: the emitted trailer expression, INCLUDING the load-bearing space
+          # after the colon. Dropping the space turns it into
+          # `Tuffgal-Full-Approval:${headSha}`, which the reader's regex rejects.
+          # shellcheck disable=SC2016
+          if ! grep -Fq 'Tuffgal-Full-Approval: ${headSha}' approve/action.yml; then
+            echo "approve/action.yml (writer) must emit the trailer as 'Tuffgal-Full-Approval: \${headSha}' — the space after the colon is load-bearing for the reader's regex." >&2
             exit 1
           fi
-          if ! grep -Fq "$trailer" scripts/run-skip.js; then
-            echo "scripts/run-skip.js (reader) must key on the byte-identical '$trailer' trailer literal." >&2
+
+          # READER: the bare TRAILER constant literal (colon-terminated)...
+          if ! grep -Fq 'Tuffgal-Full-Approval:' scripts/run-skip.js; then
+            echo "scripts/run-skip.js (reader) must define TRAILER as the byte-identical 'Tuffgal-Full-Approval:' literal." >&2
             exit 1
           fi
-          echo "approve-trailer-source-lock: writer + reader trailer literals match."
+          # ...and the anchored regex that REQUIRES a space between the trailer and
+          # the 40-hex capture. The reader interpolates TRAILER, so the colon+space
+          # is not one contiguous literal there — the space lives in `${TRAILER} (`.
+          # Pin the whole template so dropping that space (or the hex count, or an
+          # anchor) on the reader side trips this lock too.
+          # shellcheck disable=SC2016
+          if ! grep -Fq '^${TRAILER} ([0-9a-f]{40})$' scripts/run-skip.js; then
+            echo "scripts/run-skip.js (reader) regex must stay '^\${TRAILER} ([0-9a-f]{40})\$' — the space after \${TRAILER} is the load-bearing character the writer's trailer space must match." >&2
+            exit 1
+          fi
+          echo "approve-trailer-source-lock: writer emits 'Tuffgal-Full-Approval: <sha>' and reader requires the colon+space before the 40-hex SHA."
 
   # Unit tests for the root scripts/ modules' PURE logic — the Pages-preview
   # push-retry decision (pages-push.js), whose concurrent-PR race can't be

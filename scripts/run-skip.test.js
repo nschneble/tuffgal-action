@@ -61,18 +61,32 @@ test("a subdirectory working-directory full approval skips", () => {
   assert.strictEqual(result.skip, true);
 });
 
-// The writer (approve/action.yml) stamps a full-clear approval commit with this
-// EXACT message template. Copied byte-for-byte from that template — a blank line,
-// then `Tuffgal-Full-Approval: <sha>` — and NOT reconstructed from the TRAILER
-// constant, so a format drift on the writer side (a dropped blank line, a missing
-// space after the colon, a reworded subject) surfaces here as a real failing test
-// instead of silently disabling the whole skip feature. The source-lock CI job
-// only substring-greps the trailer literal; this round-trip pins the surrounding
-// message shape the reader's anchored regex depends on.
-test("the writer's exact commit-message template round-trips through the reader", () => {
-  const headSha = SHA;
-  const message = `chore(tuffgal): approve candidate baselines\n\nTuffgal-Full-Approval: ${headSha}`;
-  const result = decideRunSkip(valid({ message, parentShas: [headSha] }));
+// Exercises the READER's regex against a well-formed, spelled-out trailer line
+// (the literal `Tuffgal-Full-Approval: <sha>`, NOT reconstructed from the TRAILER
+// constant) — a reader-side regression guard for run-skip.js's own TRAILER
+// constant and TRAILER_RE regex. It does NOT and cannot verify writer/reader
+// cross-file sync: this repo's two action packages can't cross-require, so this
+// test has no runtime link to approve/action.yml's copy and could never detect a
+// drift there. That cross-file job belongs to ci.yml's approve-trailer-source-lock,
+// which now pins the load-bearing colon+space shape on BOTH sides. (An earlier
+// version of this test claimed to catch writer drift — including a "dropped blank
+// line" — but both claims were false: it has no writer link, and the blank line
+// isn't load-bearing anyway; see the m-flag case just below.)
+test("the reader's regex matches a well-formed full-approval trailer line", () => {
+  const message = `chore(tuffgal): approve candidate baselines\n\nTuffgal-Full-Approval: ${SHA}`;
+  const result = decideRunSkip(valid({ message }));
+  assert.strictEqual(result.skip, true);
+});
+
+// The blank line before the trailer is NOT load-bearing: TRAILER_RE carries the
+// `m` flag and anchors `^` at every line start, so a lone `\n` (no blank line)
+// before the trailer still lands it at a line start and still matches. Pins that
+// fact so no one re-introduces the (false) belief that a dropped blank line breaks
+// the skip. The character that DOES gate the match is the space after the colon —
+// see the reject case in the anchored-regex block below.
+test("a trailer after a single newline (no blank line) still skips (m-flag anchor)", () => {
+  const message = `chore(tuffgal): approve candidate baselines\nTuffgal-Full-Approval: ${SHA}`;
+  const result = decideRunSkip(valid({ message }));
   assert.strictEqual(result.skip, true);
 });
 
@@ -151,6 +165,19 @@ test("a 39-hex (short) trailer SHA does not match", () => {
   const short = "a".repeat(39);
   const result = decideRunSkip(
     valid({ message: `approve\n\n${TRAILER} ${short}`, parentShas: [short] })
+  );
+  assert.strictEqual(result.skip, false);
+});
+
+// The space after the colon IS the load-bearing character: TRAILER_RE requires
+// `Tuffgal-Full-Approval: ` (colon + space) before the 40-hex SHA, so a writer that
+// dropped the space (`Tuffgal-Full-Approval:<sha>`) would silently stop matching
+// and the whole skip feature would quietly break with no CI failure. This locks the
+// reader's half of that contract; ci.yml's approve-trailer-source-lock locks the
+// writer's copy of the same space, so the two cannot drift apart unseen.
+test("a trailer with no space after the colon does not match (space is load-bearing)", () => {
+  const result = decideRunSkip(
+    valid({ message: `approve\n\nTuffgal-Full-Approval:${SHA}` })
   );
   assert.strictEqual(result.skip, false);
 });
