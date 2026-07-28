@@ -584,7 +584,7 @@ runs:
           // authoritative source. `index` is the story's position in the stories
           // array — the SAME ordinal template.ts renders as `id="story-<index>"`,
           // so `#story-<index>` deep-links land on the right story.
-          let changed = [], added = [], deletedNames = [], mismatchKeys = [];
+          let changed = [], added = [], deletedNames = [], failed = [], mismatchKeys = [];
           try {
             const r = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
             (r.stories || []).forEach((s, index) => {
@@ -608,7 +608,15 @@ runs:
                 actions.filter(a => a.status === want).map(a => a.action)
                   .filter(key => typeof key === 'string' && /^[a-z0-9-]+$/.test(key));
               const name = String(s.story || s.file || `story ${index}`).replace(/[\r\n]+/g, ' ');
-              if (statuses.includes('new')) {
+              // Failed takes precedence (the rollup order is failed > changed >
+              // new > pass), so a hard failure never lands in the changed/new
+              // buckets. Carry the first failed action's message (schema:
+              // ActionResult.failureMessage — see result.d.ts); '' when absent.
+              // No candidate-tree keys: a failure isn't an approvable change.
+              if (s.status === 'failed') {
+                const a = actions.find(x => x.status === 'failed') || {};
+                failed.push({ index, name, message: a.failureMessage || '' });
+              } else if (statuses.includes('new')) {
                 const a = shotFrom('new');
                 added.push({ index, name, actual: toPreviewUrl(a.actualPath), actionKeys: keysAt('new') });
               } else if (statuses.includes('changed')) {
@@ -617,7 +625,6 @@ runs:
                   index, name,
                   baseline: toPreviewUrl(a.baselinePath),
                   actual: toPreviewUrl(a.actualPath),
-                  diff: toPreviewUrl(a.diffPath),
                   actionKeys: keysAt('changed'),
                 });
               }
@@ -637,7 +644,7 @@ runs:
           // module so the branch matrix is unit-tested.
           const body = buildCommentBody({
             outcome, counts, envMismatch, mismatchKeys, previewUrl,
-            changed, added, deletedNames, runUrl,
+            changed, added, deletedNames, failed, runUrl,
           });
           const issue_number = context.payload.pull_request.number;
 

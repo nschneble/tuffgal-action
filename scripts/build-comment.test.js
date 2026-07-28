@@ -31,6 +31,7 @@ const base = () => ({
   changed: [],
   added: [],
   deletedNames: [],
+  failed: [],
   runUrl: "https://github.com/o/r/actions/runs/1",
 });
 
@@ -108,7 +109,6 @@ test("changed stories without a preview still render a per-item approve checkbox
         name: "Home page",
         baseline: null,
         actual: null,
-        diff: null,
         actionKeys: ["home"],
       },
     ],
@@ -127,7 +127,7 @@ test("changed stories without a preview still render a per-item approve checkbox
   assert.doesNotMatch(body, /Open the full report/);
 });
 
-test("changed stories with a preview render thumbnails, a deep link, and name-bearing alt text", () => {
+test("changed stories with a preview render a two-column table, a deep link, and name-bearing alt text", () => {
   const body = buildCommentBody({
     ...base(),
     outcome: "changed",
@@ -139,15 +139,18 @@ test("changed stories with a preview render thumbnails, a deep link, and name-be
         name: "Login form",
         baseline: "https://pages.example/pr-7/baselines/login.png",
         actual: "https://pages.example/pr-7/report/login.png",
-        diff: "https://pages.example/pr-7/report/login.diff.png",
       },
     ],
   });
   assert.match(body, /<summary>Login form<\/summary>/);
+  // The table is baseline | actual only — the Diff column/cell is gone; the full
+  // diff still lives in the linked report.
+  assert.match(body, /\| Baseline \| Actual \|/);
+  assert.doesNotMatch(body, /\| Baseline \| Actual \| Diff \|/);
   // Alt text threads the story name for per-image screen-reader context.
   assert.match(body, /alt="baseline for Login form"/);
   assert.match(body, /alt="actual for Login form"/);
-  assert.match(body, /alt="diff for Login form"/);
+  assert.doesNotMatch(body, /alt="diff for Login form"/);
   assert.match(
     body,
     /<img src="https:\/\/pages\.example\/pr-7\/baselines\/login\.png"/
@@ -164,9 +167,7 @@ test("a missing image URL renders an unavailable placeholder, not a broken img",
     outcome: "changed",
     counts: { ...base().counts, changed: "1", total: "1" },
     previewUrl: "https://pages.example/pr-7",
-    changed: [
-      { index: 0, name: "Widget", baseline: null, actual: null, diff: null },
-    ],
+    changed: [{ index: 0, name: "Widget", baseline: null, actual: null }],
   });
   assert.match(body, /<em>baseline for Widget unavailable<\/em>/);
   assert.doesNotMatch(body, /<img/);
@@ -184,7 +185,6 @@ test("the img src is attribute-escaped so a crafted path cannot break out", () =
         name: "X",
         baseline: 'https://pages.example/pr-7/report/a"><script>b.png',
         actual: null,
-        diff: null,
       },
     ],
   });
@@ -204,7 +204,6 @@ test("a story name with HTML metacharacters is escaped in summary and alt", () =
         name: 'a <b> "c"',
         baseline: "https://pages.example/pr-7/report/x.png",
         actual: null,
-        diff: null,
       },
     ],
   });
@@ -267,15 +266,42 @@ test("a deleted story name with HTML metacharacters is escaped", () => {
   assert.match(body, /- a &lt;b&gt; "c"/);
 });
 
+test("the deleted section links the report's deleted heading when a preview is present", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "changed",
+    counts: { ...base().counts, deleted: "1", total: "1" },
+    previewUrl: "https://pages.example/pr-7",
+    deletedNames: ["Old header"],
+  });
+  assert.match(body, /### Deleted \(1\)/);
+  assert.match(body, /- Old header/);
+  // One section-level anchor to the report's stable <h2 id="deleted-heading">,
+  // not a per-name link.
+  assert.match(
+    body,
+    /\[View deleted baselines in report →\]\(https:\/\/pages\.example\/pr-7\/report\/index\.html#deleted-heading\)/
+  );
+});
+
+test("the deleted section omits the report link when no preview is present", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "changed",
+    counts: { ...base().counts, deleted: "1", total: "1" },
+    deletedNames: ["Old header"],
+  });
+  assert.match(body, /### Deleted \(1\)/);
+  assert.doesNotMatch(body, /View deleted baselines in report/);
+});
+
 test("pending work renders the approve CTA and the approve-box marker", () => {
   const body = buildCommentBody({
     ...base(),
     outcome: "changed",
     counts: { ...base().counts, changed: "1", total: "1" },
     previewUrl: "https://pages.example/pr-7",
-    changed: [
-      { index: 0, name: "Home", baseline: null, actual: null, diff: null },
-    ],
+    changed: [{ index: 0, name: "Home", baseline: null, actual: null }],
   });
   assert.match(body, /### Approve these changes/);
   assert.match(body, /<!-- tuffgal-approve-box -->/);
@@ -336,12 +362,140 @@ test("a failed outcome that also has pending work keeps the approve CTA", () => 
       failed: "1",
       total: "3",
     },
-    changed: [
-      { index: 0, name: "Home", baseline: null, actual: null, diff: null },
-    ],
+    changed: [{ index: 0, name: "Home", baseline: null, actual: null }],
   });
   assert.match(body, /Download the `tuffgal-report` artifact/);
   assert.match(body, /### Approve these changes/);
+});
+
+// The Failed section — hard failures, rendered after Deleted (mirroring the
+// totals-table row order) as plain bullets with no approve checkbox.
+
+test("a failed story renders in the Failed section with its message and no checkbox", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "failed",
+    counts: { ...base().counts, passed: "2", failed: "1", total: "3" },
+    failed: [
+      { index: 0, name: "Checkout", message: "Timeout waiting for selector" },
+    ],
+  });
+  assert.match(body, /### Failed \(1\)/);
+  assert.match(body, /- \*\*Checkout\*\* — Timeout waiting for selector/);
+  // A hard failure is not an approvable change: no per-item checkbox/marker.
+  assert.doesNotMatch(body, /tuffgal-approve-item/);
+  assert.doesNotMatch(body, /Approve \*\*Checkout\*\*/);
+  // No preview URL, so no report deep-link on the entry.
+  assert.doesNotMatch(body, /Open Checkout in report/);
+});
+
+test("a failed story deep-links to the report when a preview is present", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "failed",
+    counts: { ...base().counts, passed: "2", failed: "1", total: "3" },
+    previewUrl: "https://pages.example/pr-7",
+    failed: [{ index: 3, name: "Checkout", message: "boom" }],
+  });
+  assert.match(
+    body,
+    /- \*\*Checkout\*\* — boom \[Open Checkout in report →\]\(https:\/\/pages\.example\/pr-7\/report\/index\.html#story-3\)/
+  );
+});
+
+test("a failed entry with an empty message renders just the name (no dangling dash)", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "failed",
+    counts: { ...base().counts, passed: "2", failed: "1", total: "3" },
+    failed: [{ index: 0, name: "Checkout", message: "" }],
+  });
+  assert.match(body, /### Failed \(1\)/);
+  const failedLine = body
+    .split("\n")
+    .find((l) => l.includes("**Checkout**"));
+  assert.strictEqual(failedLine, "- **Checkout**");
+});
+
+test("a failed message is HTML-escaped", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "failed",
+    counts: { ...base().counts, passed: "2", failed: "1", total: "3" },
+    failed: [{ index: 0, name: "S", message: 'a <b> "c" & d' }],
+  });
+  // escapeHtml handles & < > (not quotes, matching the rest of the module).
+  assert.match(body, /- \*\*S\*\* — a &lt;b&gt; "c" &amp; d/);
+});
+
+test("a failed message collapses its newlines and whitespace runs to single spaces", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "failed",
+    counts: { ...base().counts, passed: "2", failed: "1", total: "3" },
+    failed: [{ index: 0, name: "S", message: "a\nb\r\n  c\td" }],
+  });
+  assert.match(body, /- \*\*S\*\* — a b c d/);
+});
+
+test("a long failed message is truncated to ~140 chars with an ellipsis marker", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "failed",
+    counts: { ...base().counts, passed: "2", failed: "1", total: "3" },
+    failed: [{ index: 0, name: "S", message: "A".repeat(200) }],
+  });
+  // Exactly 140 A's, then the ellipsis; never the full 200-char run.
+  assert.match(body, /A{140}…/);
+  assert.doesNotMatch(body, /A{141}/);
+});
+
+test("a failed-only run (no new/changed/deleted) does NOT render the approve CTA", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "failed",
+    counts: {
+      passed: "2",
+      changed: "0",
+      new: "0",
+      deleted: "0",
+      failed: "1",
+      total: "3",
+    },
+    failed: [{ index: 0, name: "Checkout", message: "boom" }],
+  });
+  assert.match(body, /### Failed \(1\)/);
+  // The `pending` gate counts only new/changed/deleted, so a failed-only run
+  // must never offer approval — neither the CTA heading nor the box marker.
+  assert.doesNotMatch(body, /### Approve these changes/);
+  assert.doesNotMatch(body, /tuffgal-approve-box/);
+});
+
+test("a failed story alongside changed work keeps the approve CTA for the changed work only", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "failed",
+    counts: {
+      passed: "0",
+      changed: "1",
+      new: "0",
+      deleted: "0",
+      failed: "1",
+      total: "2",
+    },
+    changed: [
+      { index: 0, name: "Home", baseline: null, actual: null, actionKeys: ["home"] },
+    ],
+    failed: [{ index: 1, name: "Checkout", message: "boom" }],
+  });
+  // Both sections render...
+  assert.match(body, /### Changed \(1\)/);
+  assert.match(body, /### Failed \(1\)/);
+  // ...the approve CTA still fires for the changed/new/deleted work...
+  assert.match(body, /### Approve these changes/);
+  // ...the changed story gets its checkbox, the failed story does not.
+  assert.match(body, /tuffgal-approve-item:home/);
+  assert.doesNotMatch(body, /Approve \*\*Checkout\*\*/);
 });
 
 test("empty story lists render only the outcome, table, and fallback link", () => {
@@ -349,6 +503,7 @@ test("empty story lists render only the outcome, table, and fallback link", () =
   assert.doesNotMatch(body, /### Changed/);
   assert.doesNotMatch(body, /### New/);
   assert.doesNotMatch(body, /### Deleted/);
+  assert.doesNotMatch(body, /### Failed/);
 });
 
 // The exported renderers are extracted for reuse and kept in step with the bash
@@ -435,7 +590,6 @@ test("a single changed entry renders one per-item approve checkbox with its key"
         name: "Home page",
         baseline: null,
         actual: null,
-        diff: null,
         actionKeys: ["visit-home"],
       },
     ],
@@ -478,7 +632,6 @@ test("multiple entries each render their own per-item approve checkbox", () => {
         name: "Home",
         baseline: null,
         actual: null,
-        diff: null,
         actionKeys: ["home"],
       },
       {
@@ -486,7 +639,6 @@ test("multiple entries each render their own per-item approve checkbox", () => {
         name: "About",
         baseline: null,
         actual: null,
-        diff: null,
         actionKeys: ["about"],
       },
     ],
@@ -513,7 +665,6 @@ test("with a preview, each per-item checkbox after the first is separated from t
         name: "Home",
         baseline: null,
         actual: null,
-        diff: null,
         actionKeys: ["home"],
       },
       {
@@ -521,7 +672,6 @@ test("with a preview, each per-item checkbox after the first is separated from t
         name: "About",
         baseline: null,
         actual: null,
-        diff: null,
         actionKeys: ["about"],
       },
     ],
@@ -550,7 +700,6 @@ test("a story with 2+ actions comma-joins its keys in one marker", () => {
         name: "Dashboard",
         baseline: null,
         actual: null,
-        diff: null,
         actionKeys: ["load-dashboard", "open-panel", "hover-tile"],
       },
     ],
@@ -573,7 +722,6 @@ test("per-item checkboxes leave the master approve-box markup byte-for-byte unch
         name: "Home",
         baseline: null,
         actual: null,
-        diff: null,
         actionKeys: ["home"],
       },
     ],
@@ -601,7 +749,6 @@ test("a story name with HTML metacharacters is escaped in its per-item checkbox"
         name: 'a <b> "c"',
         baseline: null,
         actual: null,
-        diff: null,
         actionKeys: ["x"],
       },
     ],

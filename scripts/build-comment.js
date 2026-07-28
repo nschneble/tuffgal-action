@@ -5,8 +5,8 @@
 // counts, the env-mismatch flag and keys, the (possibly empty) preview URL, and
 // the per-story image URLs read out of results.json — it returns the final
 // markdown `body` string. Extracted out of the inline `actions/github-script`
-// block so the branch matrix (preview vs none, changed/new/deleted sections,
-// env-mismatch banner, approve CTA, pass/failed/no-results outcomes) is covered
+// block so the branch matrix (preview vs none, changed/new/deleted/failed
+// sections, env-mismatch banner, approve CTA, pass/failed/no-results outcomes) is covered
 // by a `node --test` suite, the same extract-and-unit-test precedent set by the
 // sibling `approve/scripts/*.js` and `pages-push.js` modules.
 //
@@ -71,6 +71,26 @@ const escapeHtml = (text) =>
 // can't break out of the attribute. Cosmetic markdown-injection hardening.
 const escapeAttribute = (text) => escapeHtml(text).replace(/"/g, "&quot;");
 
+// The character budget for a rendered failure message in the Failed section.
+// Long harness/Playwright errors get clipped to keep the comment scannable; the
+// full message stays in the linked report and the `tuffgal-report` artifact.
+const MAX_FAILURE_MESSAGE = 140;
+
+// Normalize a story's failure message for one-line rendering: collapse every
+// whitespace run (newlines, tabs, indentation) to a single space, trim, clip to
+// the budget with an ellipsis marker, then HTML-escape. Escaping happens LAST so
+// the clip can never split a `&lt;`-style entity mid-sequence.
+const failureMessage = (message) => {
+  const oneLine = String(message == null ? "" : message)
+    .replace(/\s+/g, " ")
+    .trim();
+  const clipped =
+    oneLine.length > MAX_FAILURE_MESSAGE
+      ? oneLine.slice(0, MAX_FAILURE_MESSAGE).trimEnd() + "…"
+      : oneLine;
+  return escapeHtml(clipped);
+};
+
 // One inline thumbnail, or an italic placeholder when its preview URL is null
 // (preview off, or the image lives under neither report nor baselines root).
 const thumbnail = (url, label) =>
@@ -126,12 +146,16 @@ const ACTIONABLE = {
 //   envMismatch   boolean — render the capture-environment banner
 //   mismatchKeys  string[] — the changed environment keys, listed under the banner
 //   previewUrl    normalized Pages URL (no trailing slash), or '' when no preview
-//   changed       [{ index, name, baseline, actual, diff, actionKeys }] — image
+//   changed       [{ index, name, baseline, actual, actionKeys }] — image
 //                 URLs or null; actionKeys is the story's changed candidate-tree
 //                 keys, embedded in that entry's per-item approve marker
 //   added         [{ index, name, actual, actionKeys }] — proposed-baseline
 //                 image URL or null; actionKeys is the story's new keys
 //   deletedNames  string[] — names of removed stories
+//   failed        [{ index, name, message }] — hard-failed stories with the
+//                 first failed action's failure message (already collapsed to
+//                 one line at the call site, re-normalized + truncated here).
+//                 No approve checkbox: a failure is not an approvable change.
 //   runUrl        the workflow-run URL for the fallback link
 function buildCommentBody({
   outcome,
@@ -142,6 +166,7 @@ function buildCommentBody({
   changed,
   added,
   deletedNames,
+  failed,
   runUrl,
 }) {
   const reportUrl = previewUrl ? `${previewUrl}/report/index.html` : null;
@@ -167,8 +192,9 @@ function buildCommentBody({
   lines.push("");
 
   // Changed: with a preview, each story is a collapsible carrying inline
-  // baseline / actual / diff thumbnails plus a deep-link that opens the report
-  // scrolled to that story with its screenshots expanded. Without a preview,
+  // baseline / actual thumbnails plus a deep-link that opens the report
+  // scrolled to that story with its screenshots (including the full diff)
+  // expanded. Without a preview,
   // fall back to a plain name list. The alt text threads the story name so a
   // screen-reader user gets per-image context in a multi-story comment.
   if (changed.length) {
@@ -180,16 +206,13 @@ function buildCommentBody({
         lines.push("<details>");
         lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
         lines.push("");
-        lines.push("| Baseline | Actual | Diff |");
-        lines.push("|---|---|---|");
+        lines.push("| Baseline | Actual |");
+        lines.push("|---|---|");
         lines.push(
           `| ${thumbnail(
             entry.baseline,
             `baseline for ${entry.name}`
-          )} | ${thumbnail(
-            entry.actual,
-            `actual for ${entry.name}`
-          )} | ${thumbnail(entry.diff, `diff for ${entry.name}`)} |`
+          )} | ${thumbnail(entry.actual, `actual for ${entry.name}`)} |`
         );
         lines.push("");
         lines.push(
@@ -234,6 +257,36 @@ function buildCommentBody({
     lines.push(`### Deleted (${deletedNames.length})`);
     for (const name of deletedNames)
       lines.push(`- ${escapeHtml(String(name).replace(/[\r\n]+/g, " "))}`);
+    // With a preview, link the report's stable deleted-baselines heading. The
+    // report renders a single `<h2 id="deleted-heading">`, not per-name anchors,
+    // so this is one section-level link, never one per deleted story.
+    if (reportUrl) {
+      lines.push("");
+      lines.push(
+        `[View deleted baselines in report →](${reportUrl}#deleted-heading)`
+      );
+    }
+    lines.push("");
+  }
+
+  // Failed: hard failures, listed after Deleted to mirror the totals-table row
+  // order (Pass, Changed, New, Deleted, Failed, Total). Each is a plain bullet —
+  // name, the normalized/truncated failure message, and a report deep-link when
+  // a preview exists. Deliberately NO approve checkbox: a failure isn't an
+  // approvable baseline change, and `pending` (the approve-CTA gate) counts only
+  // new/changed/deleted, so a failed-only run never offers approval.
+  if (failed.length) {
+    lines.push(`### Failed (${failed.length})`);
+    lines.push("");
+    for (const entry of failed) {
+      const message = failureMessage(entry.message);
+      const link = storyLink(entry);
+      let line = `- **${escapeHtml(entry.name)}**`;
+      if (message) line += ` — ${message}`;
+      if (link)
+        line += ` [Open ${escapeHtml(entry.name)} in report →](${link})`;
+      lines.push(line);
+    }
     lines.push("");
   }
 

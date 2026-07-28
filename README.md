@@ -75,9 +75,9 @@ For a static-site project that doesn't need a database, you can drop the
 
 When `pages-preview` is on, a run with pending changes publishes the report
 and baselines to a per-PR GitHub Pages preview. The sticky comment then
-carries, for each changed story, inline baseline / actual / diff thumbnails
-and an open-in-report link that jumps straight to that story with its
-screenshots expanded.
+carries, for each changed story, inline side-by-side baseline / actual
+thumbnails and an open-in-report link that jumps straight to that story with
+its screenshots — including the full diff — expanded.
 
 It needs two things on the consumer repo:
 
@@ -152,7 +152,7 @@ review) > `pass`.
 7. Copy `results.json` into `<report-path>/candidates/` so the candidates artifact is self-contained for `tuffgal approve --from`
 8. Upload `<report-path>/` as `tuffgal-report` (on failures, no-results, or pending changes) and `<report-path>/candidates/` as `tuffgal-candidates` (when visual changes await review)
 9. On a PR with pending changes (and `pages-preview: true`), publish `<report-path>/` + `<baselines-path>/` to the `gh-pages` branch under `pr-<n>/`, so the report and every PNG have a real URL (best-effort — a failure just leaves the comment on the artifact-download path)
-10. On a PR event, upsert a sticky comment (marker `<!-- tuffgal-report -->`) with the totals and, when a preview published, per-changed-story inline baseline/actual/diff thumbnails + an **Open in report →** deep-link; otherwise the plain story names + artifact-download instructions. Includes an environment-mismatch banner when set, an approve checkbox + `@tuffgal approve` command, and a link to the run
+10. On a PR event, upsert a sticky comment (marker `<!-- tuffgal-report -->`) with the totals and, when a preview published, per-changed-story inline side-by-side baseline/actual thumbnails + an **Open in report →** deep-link, a **Failed** section listing each broken story (with its failure message and a report deep-link), and a report link on the **Deleted** section; otherwise the plain story names + artifact-download instructions. Includes an environment-mismatch banner when set, an approve checkbox + `@tuffgal approve` command, and a link to the run
 11. Re-surface a non-zero exit when `outcome` is `failed`, `no-results`, `env-mismatch`, or `changed` (when `fail-on-changed: true`)
 
 ## Approving candidate baselines

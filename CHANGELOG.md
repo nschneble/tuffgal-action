@@ -6,7 +6,11 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
-_Nothing just yet_
+### Changed
+
+- The sticky PR comment's Changed table drops its Diff column — side-by-side baseline / actual is enough, and the full diff still lives in the linked report
+- The sticky PR comment now lists every Failed story individually, with its failure message and (when a preview published) a deep link to that story in the report
+- The Deleted section now links the report's deleted-baselines heading when a preview published
 
 ## [v1.5.0] - 2026-07-24
 
