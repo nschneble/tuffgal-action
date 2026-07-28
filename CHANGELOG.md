@@ -11,6 +11,7 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 - The sticky PR comment's Changed table drops its Diff column — side-by-side baseline / actual is enough, and the full diff still lives in the linked report
 - The sticky PR comment now lists every Failed story individually, with its failure message and (when a preview published) a deep link to that story in the report
 - The Deleted section now links the report's deleted-baselines heading when a preview published
+- The sticky PR comment is now breakpoint-aware: when a run spans more than one breakpoint, the Changed and New tables show one thumbnail row per drifted breakpoint and the Deleted, Failed, and per-story approve-checkbox lines name which breakpoints drifted; a single-breakpoint run renders exactly as before. Deleted entries are also grouped per story, so a story removed at several breakpoints is listed once instead of once per breakpoint
 
 ## [v1.5.0] - 2026-07-24
 

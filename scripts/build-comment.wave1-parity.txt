@@ -1,0 +1,62 @@
+<!-- tuffgal-report -->
+## 👁️ Tuffgal visual regression
+
+Outcome: **changed**
+
+> ⚠️ **Capture environment changed** — the committed baselines were captured in a different environment than this CI run. Comparison still ran, but expect a full re-approve.
+>
+> Changed keys: `os`, `viewport`
+
+| Status | Count |
+|--------|-------|
+| Pass | 2 |
+| Changed | 1 |
+| New | 1 |
+| Deleted | 1 |
+| Failed | 1 |
+| Total | 6 |
+
+### Changed (1)
+
+- [ ] <!-- tuffgal-approve-item:visit-home,hover-cta --> Approve **Home hero**
+<details>
+<summary>Home hero</summary>
+
+| Baseline | Actual |
+|---|---|
+| <img src="https://pages.example/pr-7/baselines/home/0.png" alt="baseline for Home hero" width="260"> | <img src="https://pages.example/pr-7/report/home/0.png" alt="actual for Home hero" width="260"> |
+
+[Open Home hero in report →](https://pages.example/pr-7/report/index.html#story-0)
+</details>
+
+
+### New (1)
+
+- [ ] <!-- tuffgal-approve-item:render-nav --> Approve **Nav bar**
+<details>
+<summary>Nav bar</summary>
+
+Proposed new baseline: <img src="https://pages.example/pr-7/report/nav/0.png" alt="proposed baseline for Nav bar" width="260">
+
+[Open Nav bar in report →](https://pages.example/pr-7/report/index.html#story-1)
+</details>
+
+
+### Deleted (1)
+- old-footer
+
+[View deleted baselines in report →](https://pages.example/pr-7/report/index.html#deleted-heading)
+
+### Failed (1)
+
+- **Checkout flow** — Timeout 30000ms exceeded waiting for selector ".pay" [Open Checkout flow in report →](https://pages.example/pr-7/report/index.html#story-2)
+
+### Approve these changes
+
+📊 [Open the full report](https://pages.example/pr-7/report/index.html) — scrolls to each changed story with screenshots expanded.
+
+- [ ] <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit the candidate baselines to this PR (requires write access).
+
+…or comment `@tuffgal approve`. Prefer a local checkout? Download the `tuffgal-candidates` artifact from the run and run `npx tuffgal approve --from <extracted-dir> --prune`, then commit the updated baselines directory.
+
+[View the run →](https://github.com/o/r/actions/runs/1)

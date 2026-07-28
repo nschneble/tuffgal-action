@@ -584,20 +584,35 @@ runs:
           // authoritative source. `index` is the story's position in the stories
           // array — the SAME ordinal template.ts renders as `id="story-<index>"`,
           // so `#story-<index>` deep-links land on the right story.
-          let changed = [], added = [], deletedNames = [], failed = [], mismatchKeys = [];
+          let changed = [], added = [], deleted = [], failed = [], mismatchKeys = [], multiBreakpoint = false;
           try {
             const r = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
+            // Distinct, non-empty breakpoint names this run captured at, across
+            // every story action AND every deleted-baseline record. More than one
+            // -> multi-breakpoint mode (per-breakpoint detail rows + labels). A
+            // run with a single breakpoint, or a legacy artifact whose actions
+            // carry no `breakpoint`, stays single-breakpoint and renders exactly
+            // as before.
+            const breakpointNames = new Set();
+            (r.stories || []).forEach(s => (s.actions || []).forEach(a => {
+              if (a && a.breakpoint) breakpointNames.add(a.breakpoint);
+            }));
+            (r.deleted || []).forEach(d => {
+              if (d && typeof d === 'object' && d.breakpoint) breakpointNames.add(d.breakpoint);
+            });
+            multiBreakpoint = breakpointNames.size > 1;
             (r.stories || []).forEach((s, index) => {
               const actions = s.actions || [];
               const statuses = [s.status].concat(actions.map(a => a.status));
-              // One representative shot per story for the inline preview: the
-              // first action that actually drifted (or the story's first action).
-              const shotFrom = (want) => actions.find(a => a.status === want) || actions[0] || {};
               // ALL of this story's candidate-tree action keys at the bucket's
-              // status — a story can carry several actions, and `tuffgal approve`
+              // status: a story can carry several actions, and `tuffgal approve`
               // selects by these `.action` directory keys, so the per-item
               // approve checkbox must carry every matching one (not just the
-              // single thumbnail action `shotFrom` picks).
+              // representative shot rendered in the preview). Deduped: the same
+              // action runs once PER breakpoint, so a multi-breakpoint story
+              // yields the same `.action` key N times — the marker carries each
+              // distinct key once (resolve-approver Set-dedupes on read anyway,
+              // but the rendered marker should not repeat a key).
               // Allowlist-filter the keys on this WRITE side too (defense in
               // depth, symmetric with the read side in resolve-approver.js and the
               // delete side in filter-candidates.js), so a malformed action key
@@ -605,32 +620,50 @@ runs:
               // pattern is the tuffgal CLI's own action-key allowlist, inlined
               // here (this github-script block can't require the extracted module).
               const keysAt = (want) =>
-                actions.filter(a => a.status === want).map(a => a.action)
-                  .filter(key => typeof key === 'string' && /^[a-z0-9-]+$/.test(key));
+                [...new Set(
+                  actions.filter(a => a.status === want).map(a => a.action)
+                    .filter(key => typeof key === 'string' && /^[a-z0-9-]+$/.test(key))
+                )];
+              // One shot per action that actually drifted at the bucket's status,
+              // each tagged with its breakpoint so the multi-breakpoint renderer
+              // shows one detail row per breakpoint. Single-breakpoint mode reads
+              // shots[0] only, matching the prior representative-shot pick (the
+              // first action at that status). Changed carries baseline + actual;
+              // new carries actual only (no prior baseline exists yet).
+              const shotsAt = (want, withBaseline) =>
+                actions.filter(a => a.status === want).map(a => (
+                  withBaseline
+                    ? { breakpoint: a.breakpoint, baseline: toPreviewUrl(a.baselinePath), actual: toPreviewUrl(a.actualPath) }
+                    : { breakpoint: a.breakpoint, actual: toPreviewUrl(a.actualPath) }
+                ));
               const name = String(s.story || s.file || `story ${index}`).replace(/[\r\n]+/g, ' ');
               // Failed takes precedence (the rollup order is failed > changed >
               // new > pass), so a hard failure never lands in the changed/new
-              // buckets. Carry the first failed action's message (schema:
-              // ActionResult.failureMessage — see result.d.ts); '' when absent.
-              // No candidate-tree keys: a failure isn't an approvable change.
+              // buckets. Carry the first failed action's message + its breakpoint
+              // (schema: ActionResult.failureMessage / .breakpoint in result.d.ts);
+              // '' / undefined when absent. No candidate-tree keys: a failure is
+              // not an approvable change.
               if (s.status === 'failed') {
                 const a = actions.find(x => x.status === 'failed') || {};
-                failed.push({ index, name, message: a.failureMessage || '' });
+                failed.push({ index, name, message: a.failureMessage || '', breakpoint: a.breakpoint });
               } else if (statuses.includes('new')) {
-                const a = shotFrom('new');
-                added.push({ index, name, actual: toPreviewUrl(a.actualPath), actionKeys: keysAt('new') });
+                added.push({ index, name, shots: shotsAt('new', false), actionKeys: keysAt('new') });
               } else if (statuses.includes('changed')) {
-                const a = shotFrom('changed');
-                changed.push({
-                  index, name,
-                  baseline: toPreviewUrl(a.baselinePath),
-                  actual: toPreviewUrl(a.actualPath),
-                  actionKeys: keysAt('changed'),
-                });
+                changed.push({ index, name, shots: shotsAt('changed', true), actionKeys: keysAt('changed') });
               }
             });
-            deletedNames = (r.deleted || []).map(d =>
-              typeof d === 'string' ? d : (d.action || d.story || d.path || JSON.stringify(d)));
+            // Deleted baselines are recorded one entry PER breakpoint per action
+            // (schema: DeletedBaseline { action, breakpoint, baselinePaths }), so
+            // group by display name -> a story dropped at N breakpoints is listed
+            // once carrying all N, never N duplicate rows.
+            const deletedIndex = new Map();
+            (r.deleted || []).forEach(d => {
+              const name = typeof d === 'string' ? d : (d.action || d.story || d.path || JSON.stringify(d));
+              const bp = (d && typeof d === 'object') ? d.breakpoint : undefined;
+              let group = deletedIndex.get(name);
+              if (!group) { group = { name, breakpoints: [] }; deletedIndex.set(name, group); deleted.push(group); }
+              if (bp && !group.breakpoints.includes(bp)) group.breakpoints.push(bp);
+            });
             mismatchKeys = (r.environment && r.environment.mismatchKeys) || [];
           } catch (e) {
             core.info(`Could not read story names from results.json: ${e.message}`);
@@ -644,7 +677,7 @@ runs:
           // module so the branch matrix is unit-tested.
           const body = buildCommentBody({
             outcome, counts, envMismatch, mismatchKeys, previewUrl,
-            changed, added, deletedNames, failed, runUrl,
+            changed, added, deleted, failed, multiBreakpoint, runUrl,
           });
           const issue_number = context.payload.pull_request.number;
 

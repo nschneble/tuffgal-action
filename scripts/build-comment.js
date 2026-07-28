@@ -2,9 +2,10 @@
 //
 // Pure, unit-testable builder for the sticky PR comment body. Given the pieces
 // the `Post sticky PR comment` step has already computed — the parsed outcome +
-// counts, the env-mismatch flag and keys, the (possibly empty) preview URL, and
-// the per-story image URLs read out of results.json — it returns the final
-// markdown `body` string. Extracted out of the inline `actions/github-script`
+// counts, the env-mismatch flag and keys, the (possibly empty) preview URL, the
+// per-story per-breakpoint image URLs read out of results.json, and whether the
+// run spanned more than one breakpoint — it returns the final markdown `body`
+// string. Extracted out of the inline `actions/github-script`
 // block so the branch matrix (preview vs none, changed/new/deleted/failed
 // sections, env-mismatch banner, approve CTA, pass/failed/no-results outcomes) is covered
 // by a `node --test` suite, the same extract-and-unit-test precedent set by the
@@ -49,14 +50,40 @@ const approveItemMarker = (actionKeys) =>
     .filter((key) => typeof key === "string" && ACTION_NAME_PATTERN.test(key))
     .join(",")} -->`;
 
+// The distinct, non-empty breakpoint names an entry drifted at, in first-seen
+// order. Drives both the multi-breakpoint checkbox suffix and (via the caller)
+// the per-breakpoint detail rows. Empty for a single-config/legacy run whose
+// actions carry no `breakpoint`.
+const distinctBreakpoints = (shots) => {
+  const out = [];
+  for (const shot of shots || []) {
+    if (shot && shot.breakpoint && !out.includes(shot.breakpoint)) {
+      out.push(shot.breakpoint);
+    }
+  }
+  return out;
+};
+
 // One per-item approve checkbox line. Rendered as a top-level task-list item
 // (not nested inside the entry's `<details>`) on purpose: a checkbox toggled
 // inside a `<details>` bubbles its click to the collapsible and snaps it shut,
 // so the interactive box lives on its own line above the thumbnails.
-const approveItemCheckbox = (entry) =>
-  `- [ ] ${approveItemMarker(entry.actionKeys)} Approve **${escapeHtml(
+//
+// In multi-breakpoint mode a plain-text `(mobile, desktop)` suffix naming the
+// drifted breakpoints is appended AFTER the marker + tick-box. That suffix is
+// free text to `resolve-approver.js`'s `CHECKED_ITEM_BOX` regex, which matches
+// only the literal marker through its `-->` and the tick state — never trailing
+// text — so the suffix can never perturb which keys a ticked box approves.
+const approveItemCheckbox = (entry, multiBreakpoint) => {
+  let line = `- [ ] ${approveItemMarker(entry.actionKeys)} Approve **${escapeHtml(
     entry.name
   )}**`;
+  if (multiBreakpoint) {
+    const bps = distinctBreakpoints(entry.shots);
+    if (bps.length) line += ` (${bps.map(escapeHtml).join(", ")})`;
+  }
+  return line;
+};
 
 // Escape text for HTML flow content (story names in a <summary>).
 const escapeHtml = (text) =>
@@ -146,16 +173,31 @@ const ACTIONABLE = {
 //   envMismatch   boolean — render the capture-environment banner
 //   mismatchKeys  string[] — the changed environment keys, listed under the banner
 //   previewUrl    normalized Pages URL (no trailing slash), or '' when no preview
-//   changed       [{ index, name, baseline, actual, actionKeys }] — image
-//                 URLs or null; actionKeys is the story's changed candidate-tree
-//                 keys, embedded in that entry's per-item approve marker
-//   added         [{ index, name, actual, actionKeys }] — proposed-baseline
-//                 image URL or null; actionKeys is the story's new keys
-//   deletedNames  string[] — names of removed stories
-//   failed        [{ index, name, message }] — hard-failed stories with the
-//                 first failed action's failure message (already collapsed to
-//                 one line at the call site, re-normalized + truncated here).
-//                 No approve checkbox: a failure is not an approvable change.
+//   changed       [{ index, name, shots, actionKeys }] — `shots` is one entry
+//                 per drifted breakpoint: { breakpoint, baseline, actual } with
+//                 image URLs or null. Single-breakpoint/legacy runs carry one
+//                 shot (breakpoint absent) and render `shots[0]` exactly as
+//                 before; multi-breakpoint runs render one detail row per shot.
+//                 actionKeys is the story's changed candidate-tree keys.
+//   added         [{ index, name, shots, actionKeys }] — same shape; each shot's
+//                 `actual` is the proposed baseline (no `baseline` — none exists
+//                 yet). actionKeys is the story's new keys.
+//   deleted       [{ name, breakpoints }] — one entry per removed story/action
+//                 (grouped across breakpoints, so a multi-breakpoint deletion is
+//                 listed once, not once per breakpoint). `breakpoints` is the
+//                 breakpoint names it was removed at; rendered only in
+//                 multi-breakpoint mode.
+//   failed        [{ index, name, message, breakpoint }] — hard-failed stories
+//                 with the first failed action's failure message (already
+//                 collapsed to one line at the call site, re-normalized +
+//                 truncated here) and that action's breakpoint (labelled only in
+//                 multi-breakpoint mode). No approve checkbox: a failure is not
+//                 an approvable change.
+//   multiBreakpoint  boolean — true when this run spans more than one distinct
+//                 breakpoint. Drives per-breakpoint detail rows + labels; false
+//                 (the common single-config case, and legacy artifacts with no
+//                 `breakpoint` field) renders byte-identically to the prior
+//                 single-representative-shot output.
 //   runUrl        the workflow-run URL for the fallback link
 function buildCommentBody({
   outcome,
@@ -165,8 +207,9 @@ function buildCommentBody({
   previewUrl,
   changed,
   added,
-  deletedNames,
+  deleted,
   failed,
+  multiBreakpoint,
   runUrl,
 }) {
   const reportUrl = previewUrl ? `${previewUrl}/report/index.html` : null;
@@ -201,19 +244,38 @@ function buildCommentBody({
     lines.push(`### Changed (${changed.length})`);
     lines.push("");
     for (const entry of changed) {
-      lines.push(approveItemCheckbox(entry));
+      lines.push(approveItemCheckbox(entry, multiBreakpoint));
       if (previewUrl) {
         lines.push("<details>");
         lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
         lines.push("");
-        lines.push("| Baseline | Actual |");
-        lines.push("|---|---|");
-        lines.push(
-          `| ${thumbnail(
-            entry.baseline,
-            `baseline for ${entry.name}`
-          )} | ${thumbnail(entry.actual, `actual for ${entry.name}`)} |`
-        );
+        if (multiBreakpoint) {
+          // One row per drifted breakpoint, each labelled with its mode name.
+          lines.push("| Breakpoint | Baseline | Actual |");
+          lines.push("|---|---|---|");
+          for (const shot of entry.shots || []) {
+            lines.push(
+              `| ${escapeHtml(
+                shot.breakpoint == null ? "" : shot.breakpoint
+              )} | ${thumbnail(
+                shot.baseline,
+                `baseline for ${entry.name}`
+              )} | ${thumbnail(shot.actual, `actual for ${entry.name}`)} |`
+            );
+          }
+        } else {
+          // Single representative shot — byte-identical to the pre-breakpoint
+          // two-column table.
+          const shot = (entry.shots && entry.shots[0]) || {};
+          lines.push("| Baseline | Actual |");
+          lines.push("|---|---|");
+          lines.push(
+            `| ${thumbnail(
+              shot.baseline,
+              `baseline for ${entry.name}`
+            )} | ${thumbnail(shot.actual, `actual for ${entry.name}`)} |`
+          );
+        }
         lines.push("");
         lines.push(
           `[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`
@@ -231,17 +293,34 @@ function buildCommentBody({
     lines.push(`### New (${added.length})`);
     lines.push("");
     for (const entry of added) {
-      lines.push(approveItemCheckbox(entry));
+      lines.push(approveItemCheckbox(entry, multiBreakpoint));
       if (previewUrl) {
         lines.push("<details>");
         lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
         lines.push("");
-        lines.push(
-          `Proposed new baseline: ${thumbnail(
-            entry.actual,
-            `proposed baseline for ${entry.name}`
-          )}`
-        );
+        if (multiBreakpoint) {
+          // One actual-only row per breakpoint — there is no prior baseline.
+          lines.push("| Breakpoint | Actual |");
+          lines.push("|---|---|");
+          for (const shot of entry.shots || []) {
+            lines.push(
+              `| ${escapeHtml(
+                shot.breakpoint == null ? "" : shot.breakpoint
+              )} | ${thumbnail(
+                shot.actual,
+                `proposed baseline for ${entry.name}`
+              )} |`
+            );
+          }
+        } else {
+          const shot = (entry.shots && entry.shots[0]) || {};
+          lines.push(
+            `Proposed new baseline: ${thumbnail(
+              shot.actual,
+              `proposed baseline for ${entry.name}`
+            )}`
+          );
+        }
         lines.push("");
         lines.push(
           `[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`
@@ -253,10 +332,18 @@ function buildCommentBody({
     lines.push("");
   }
 
-  if (deletedNames.length) {
-    lines.push(`### Deleted (${deletedNames.length})`);
-    for (const name of deletedNames)
-      lines.push(`- ${escapeHtml(String(name).replace(/[\r\n]+/g, " "))}`);
+  if (deleted.length) {
+    lines.push(`### Deleted (${deleted.length})`);
+    for (const entry of deleted) {
+      let line = `- ${escapeHtml(String(entry.name).replace(/[\r\n]+/g, " "))}`;
+      // In multi-breakpoint mode, name the breakpoints the story was removed at.
+      // The entries are grouped by story/action upstream, so a story dropped at
+      // N breakpoints is listed ONCE with all its breakpoints — not N times.
+      if (multiBreakpoint && entry.breakpoints && entry.breakpoints.length) {
+        line += ` — ${entry.breakpoints.map(escapeHtml).join(", ")}`;
+      }
+      lines.push(line);
+    }
     // With a preview, link the report's stable deleted-baselines heading. The
     // report renders a single `<h2 id="deleted-heading">`, not per-name anchors,
     // so this is one section-level link, never one per deleted story.
@@ -282,6 +369,11 @@ function buildCommentBody({
       const message = failureMessage(entry.message);
       const link = storyLink(entry);
       let line = `- **${escapeHtml(entry.name)}**`;
+      // In multi-breakpoint mode, name which breakpoint failed right after the
+      // story name; single-breakpoint mode stays label-free (Wave-1 output).
+      if (multiBreakpoint && entry.breakpoint) {
+        line += ` (${escapeHtml(entry.breakpoint)})`;
+      }
       if (message) line += ` — ${message}`;
       if (link)
         line += ` [Open ${escapeHtml(entry.name)} in report →](${link})`;
