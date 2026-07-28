@@ -13,11 +13,14 @@
 //
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   REPORT_MARKER,
   STATUS_OPEN,
   STATUS_CLOSE,
+  TRIGGER_SUBSTRINGS,
   untickApproveBoxes,
   hasTickedApproveMarker,
   withStatusBanner,
@@ -28,15 +31,6 @@ const {
 // in a test (it runs against the whole checkout).
 const { resolveApprover } = require('./resolve-approver.js');
 const { MARKER, buildCommentBody } = require('../../scripts/build-comment.js');
-
-// The four literal substrings the consumer workflow prefilters on. Duplicated here
-// so the "never in an untick output" assertion pins the real loop trigger.
-const TRIGGER_SUBSTRINGS = [
-  '[x] <!-- tuffgal-approve-box',
-  '[X] <!-- tuffgal-approve-box',
-  '[x] <!-- tuffgal-approve-item:',
-  '[X] <!-- tuffgal-approve-item:',
-];
 
 // --- REPORT_MARKER stays in step with the real MARKER --------------------- //
 
@@ -346,4 +340,103 @@ test('integration: full-approve transform (untick + strip CTA + banner) is loop-
   assert.strictEqual(hasTickedApproveMarker(transformed), false);
   assert.doesNotMatch(transformed, /### Approve these changes/);
   assert.doesNotMatch(transformed, /tuffgal-approve-box/);
+});
+
+// --- cross-file lock: TRIGGER_SUBSTRINGS stays in step with the example ---- //
+
+// The four literal substrings this module's hasTickedApproveMarker keys on are a
+// HAND-DUPLICATED copy of the consumer trigger workflow's `if:` prefilter in
+// examples/tuffgal-approve.yml. If that workflow's condition drifts (a marker
+// renamed, a case-sensitivity or per-item arm dropped) while this module's copy
+// stays put, the two silently desync — the exact cross-file break no `node --test`
+// currently catches. Reading the example off disk (a plain file — not a runtime
+// cross-composite-action require, which is what blocks importing another action's
+// JS module) and asserting every TRIGGER_SUBSTRINGS value still appears verbatim
+// is a genuine executable check of the real linkage, not a re-hardcoded twin.
+test('TRIGGER_SUBSTRINGS: every value still appears verbatim in examples/tuffgal-approve.yml', () => {
+  const examplePath = path.join(__dirname, '..', '..', 'examples', 'tuffgal-approve.yml');
+  const exampleSource = fs.readFileSync(examplePath, 'utf8');
+  assert.ok(TRIGGER_SUBSTRINGS.length === 4, 'expected exactly the four prefilter substrings');
+  for (const substring of TRIGGER_SUBSTRINGS) {
+    assert.ok(
+      exampleSource.includes(substring),
+      `examples/tuffgal-approve.yml no longer contains the trigger substring ${JSON.stringify(substring)} — the example workflow's if: condition drifted from report-comment.js's TRIGGER_SUBSTRINGS.`
+    );
+  }
+});
+
+// --- item-level coverage: composed lifecycle + edge cases ----------------- //
+
+test('withStatusBanner: full production lifecycle collapses to one banner, no ticked marker, CTA gone', () => {
+  // Start from a genuine trigger state: a body with BOTH the master and a per-item
+  // box ticked (a human approving everything).
+  const start = tickedStickyBody();
+  assert.strictEqual(hasTickedApproveMarker(start), true);
+
+  // 1. In-flight: untick + banner (the real step-1b sequence).
+  const inFlight = withStatusBanner(untickApproveBoxes(start), [
+    '> ⚙️ **Approving baselines** — fetching the approved candidates and committing them…',
+  ]);
+  // 2. Milestone: re-untick + re-banner on the SAME evolving body.
+  const milestone = withStatusBanner(untickApproveBoxes(inFlight), [
+    '> 📦 **Candidates fetched** — committing the approved baselines…',
+  ]);
+  // 3. Final (full approve): untick + strip CTA + banner.
+  const final = withStatusBanner(stripApproveCta(untickApproveBoxes(milestone)), [
+    '> ✅ **All baselines approved** and committed as [`abc1234`](https://example/commit/abc1234).',
+  ]);
+
+  // Exactly one banner block survived the three rewrites (never duplicated).
+  assert.strictEqual(bannerBlockCount(final), 1);
+  // The latest banner is the one showing; the earlier two were replaced in place.
+  assert.match(final, /All baselines approved/);
+  assert.doesNotMatch(final, /Approving baselines/);
+  assert.doesNotMatch(final, /Candidates fetched/);
+  // No ticked marker survives the composed sequence (loop-safe end state).
+  assert.strictEqual(hasTickedApproveMarker(final), false);
+  // The full-approve CTA is gone.
+  assert.doesNotMatch(final, /### Approve these changes/);
+  assert.doesNotMatch(final, /tuffgal-approve-box/);
+});
+
+test('withStatusBanner: an open delimiter with NO close delimiter falls back to first-insertion (documents current behavior)', () => {
+  // A corrupted prior write left a STATUS_OPEN with no matching STATUS_CLOSE. The
+  // in-place replace path requires BOTH delimiters, so this falls through to the
+  // first-insertion path and adds a fresh, well-formed block after the marker —
+  // leaving the orphan open marker behind (two STATUS_OPEN occurrences). This is a
+  // low-likelihood edge case; the test PINS the actual behavior (no crash, a sane
+  // fresh banner) rather than changing it.
+  const corrupted = [REPORT_MARKER, STATUS_OPEN, '> orphan banner with no close', 'trailing body'].join('\n');
+  const out = withStatusBanner(corrupted, ['> fresh banner']);
+  // Did not throw, produced a fresh well-formed block.
+  assert.match(out, /> fresh banner/);
+  assert.ok(out.includes(STATUS_CLOSE));
+  assert.match(out, /trailing body/);
+  // The orphan open marker is not cleaned up, so the open delimiter now appears twice.
+  assert.strictEqual(bannerBlockCount(out), 2);
+});
+
+test('hasTickedApproveMarker: the REGEX arm (not the substring arm) catches unusual internal whitespace', () => {
+  // Extra whitespace around the tick box and inside the marker comment. The four
+  // plain-substring prefilter literals all use single spaces, so NONE of them is a
+  // substring of this body — only the `\s*`-tolerant parser regex arm can match it.
+  const spaced = '-  [X]   <!--   tuffgal-approve-box   -->  **Approve these baselines**';
+  // Prove the substring arm alone would miss it: no literal prefilter substring hits.
+  for (const substring of TRIGGER_SUBSTRINGS) {
+    assert.ok(!spaced.includes(substring), `substring arm should not match ${JSON.stringify(substring)}`);
+  }
+  // Yet the guard still flags it — via the regex arm — so that arm is not dead code.
+  assert.strictEqual(hasTickedApproveMarker(spaced), true);
+});
+
+test('withStatusBanner: a body with NO REPORT_MARKER still gets a sane banner (marker-absent fallback)', () => {
+  const body = ['no marker here', 'just some text'].join('\n');
+  const out = withStatusBanner(body, ['> banner']);
+  // Did not throw; the banner block and the original text both survive.
+  assert.ok(out.includes(STATUS_OPEN));
+  assert.match(out, /> banner/);
+  assert.ok(out.includes(STATUS_CLOSE));
+  assert.match(out, /no marker here/);
+  assert.match(out, /just some text/);
+  assert.strictEqual(bannerBlockCount(out), 1);
 });

@@ -884,23 +884,25 @@ runs:
             return;
           }
 
-          await github.rest.reactions.createForIssueComment({
-            owner, repo, comment_id: Number(process.env.COMMENT_ID), content: 'rocket',
-          });
-
           // Short SHA of the new commit, reused by the synthesized-check summary and
           // the success comment's commit link below.
           const shortSha = commit.data.sha.slice(0, 7);
 
           // Surface the successful commit to the final status step (a SEPARATE
           // step, because it must edit the sticky comment with the DEFAULT token,
-          // not this step's inputs.token). Set right after the ref fast-forwarded,
-          // so a later cosmetic failure in this step (reaction / success comment)
-          // still lets the final step post the success banner rather than a
-          // misleading failure one.
+          // not this step's inputs.token). Set the MOMENT the ref fast-forwarded —
+          // BEFORE the reaction and success-comment calls below — so a later
+          // cosmetic failure in this step (a deleted comment, a transient reaction
+          // API error) still lets the final step post the success banner rather than
+          // a misleading failure one: the branch genuinely advanced, so committed is
+          // already 'true' by the time anything cosmetic can throw.
           core.setOutput('committed', 'true');
           core.setOutput('commit_sha', commit.data.sha);
           core.setOutput('short_sha', shortSha);
+
+          await github.rest.reactions.createForIssueComment({
+            owner, repo, comment_id: Number(process.env.COMMENT_ID), content: 'rocket',
+          });
 
           // Re-run shortcut (check synthesis). We are here ONLY because a real
           // commit landed and the ref fast-forwarded (tree.length === 0 returned
@@ -1011,9 +1013,9 @@ runs:
     #                                                                     #
     #    Full approve: STRIP the whole "Approve these changes" CTA         #
     #    (approve-all box included) — nothing left to approve. Partial:     #
-    #    leave the (already-unticked) boxes in place; a later wave         #
-    #    relabels them. Sets `reported=true` so the failure step below      #
-    #    stands down. Same untick + assert + try/catch discipline.         #
+    #    leave the (already-unticked) boxes in place. Sets `reported=true` #
+    #    so the failure step below stands down. Same untick + assert +     #
+    #    try/catch discipline.                                             #
     # ------------------------------------------------------------------ #
     - name: Finalize the sticky report comment status
       id: report_final
@@ -1060,8 +1062,14 @@ runs:
 
             if (process.env.NOTHING_TO_COMMIT === 'true') {
               // Benign no-op: the approved tree already matched the head branch, so
-              // no new commit was made. Restore a stable, non-progress banner (the
+              // no new commit was made. On a FULL approve, still strip the whole CTA
+              // — there is nothing left to approve either way, matching the
+              // committed-success full-approve path below; a partial keeps its
+              // remaining boxes in place. Restore a stable, non-progress banner (the
               // boxes stay unticked from above) rather than leaving "committing…".
+              if (process.env.IS_PARTIAL !== 'true') {
+                body = stripApproveCta(body);
+              }
               banner = [
                 `> ✅ **Already up to date** — the approved baselines already match this branch, so no new commit was needed.`,
                 `>`,
@@ -1076,9 +1084,10 @@ runs:
               // The retrigger tail. Default token: the check won't re-run on its own
               // (GITHUB_TOKEN pushes fire no workflow) — mirror the separate success
               // comment's kick options. Custom token + full approve: the check
-              // re-runs and short-circuits to a fast pass (wave 3's run-skip.js reads
-              // the Tuffgal-Full-Approval trailer this commit carries). Custom token
-              // + partial: it re-runs normally (no trailer, no short-circuit).
+              // re-runs and short-circuits to a fast pass (the main action's
+              // scripts/run-skip.js reads the Tuffgal-Full-Approval trailer this
+              // commit carries). Custom token + partial: it re-runs normally (no
+              // trailer, no short-circuit).
               const tail = tokenIsDefault
                 ? [
                     `>`,

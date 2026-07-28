@@ -22,7 +22,10 @@
 
 // Injected as the first line of every comment body. The upsert step greps for
 // this marker to find the comment to update, so it is exported rather than
-// duplicated at the call site.
+// duplicated at the call site. The approve action's
+// approve/scripts/report-comment.js keeps a HAND-DUPLICATED byte-identical copy
+// of this literal as its REPORT_MARKER — it lives in a SEPARATE action package
+// that cannot cross-require this one — so keep the two byte-identical.
 const MARKER = "<!-- tuffgal-report -->";
 
 // The action-key allowlist, applied on the WRITE side so a malformed key never

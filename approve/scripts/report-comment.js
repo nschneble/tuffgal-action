@@ -46,9 +46,9 @@ const CTA_HEADING = '### Approve these changes';
 // (its `isMasterBox` and `CHECKED_ITEM_BOX` regexes). Capturing groups wrap
 // everything AROUND the tick state so an unticking replace preserves the marker
 // comment and the exact surrounding spacing byte-for-byte, and any trailing text
-// after `-->` (a story name, or — after wave 2 — a `(mobile, desktop)` breakpoint
-// suffix) is never in the match, so it is left completely untouched. Global so a
-// single `.replace` rewrites every occurrence.
+// after `-->` (a story name, or a `(mobile, desktop)` multi-breakpoint suffix)
+// is never in the match, so it is left completely untouched. Global so a single
+// `.replace` rewrites every occurrence.
 const TICKED_APPROVE_ALL = /(-\s*\[)[xX](\]\s*<!--\s*tuffgal-approve-box\s*-->)/g;
 const TICKED_APPROVE_ITEM = /(-\s*\[)[xX](\]\s*<!--\s*tuffgal-approve-item:[a-z0-9,-]*\s*-->)/g;
 
@@ -155,6 +155,7 @@ module.exports = {
   REPORT_MARKER,
   STATUS_OPEN,
   STATUS_CLOSE,
+  TRIGGER_SUBSTRINGS,
   untickApproveBoxes,
   hasTickedApproveMarker,
   withStatusBanner,

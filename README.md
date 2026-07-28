@@ -219,6 +219,11 @@ the bot edits that same comment in place as the run progresses:
   retry. The approve boxes are already re-tickable (they're unticked the instant
   approval starts).
 
+This live banner is **in addition to** the bot's existing approve feedback, not a
+replacement: the separate `<!-- tuffgal-approve -->` reply comment and the 👀 / 🚀
+reactions on your triggering comment still fire exactly as before. The banner just
+keeps the main report comment current while all of that happens.
+
 These edits are made with the default `GITHUB_TOKEN` and always leave every
 approve checkbox **unticked**, so the bot can never edit its own comment into a
 shape that re-triggers the approve workflow.
