@@ -6,6 +6,10 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+### Added
+
+- The approve action now edits the sticky report comment in place as an approval runs, so a watching maintainer sees live progress instead of a frozen comment. It moves through an in-flight banner (⚙️ approving now), a milestone banner (📦 candidates fetched, committing), and a final banner: a full approval reports ✅ all baselines approved, links the commit, and strips the now-pointless approve checkbox; a partial approval reports how many of the candidates were promoted and leaves the remaining boxes. A failure surfaces a ⚠️ banner inviting a retry. Every edit uses the default `GITHUB_TOKEN` and leaves all approve checkboxes unticked, so the bot can never re-trigger the approve workflow on its own comment
+
 ### Changed
 
 - The sticky PR comment's Changed table drops its Diff column — side-by-side baseline / actual is enough, and the full diff still lives in the linked report

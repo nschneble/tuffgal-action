@@ -197,6 +197,32 @@ verifies the commenter has write access, downloads the candidates artifact from
 the PR's latest run, applies it with `tuffgal approve --from <dir> --prune`, and
 commits the updated baselines to the PR head branch.
 
+### Live status in the sticky comment
+
+Approving takes a couple of minutes (fetching candidates, then committing them).
+Rather than leave the report comment looking frozen behind a lone 👀 reaction,
+the bot edits that same comment in place as the run progresses:
+
+- **⚙️ In-flight** — the moment the approver is verified: _Approving baselines —
+  fetching the approved candidates and committing them…_
+- **📦 Milestone** — once the candidates are fetched and filtered: _committing
+  the approved baselines…_
+- **✅ Final** — after the commit lands. A full approval reports _All baselines
+  approved and committed as `<sha>`_ and removes the now-pointless approve
+  checkbox; a partial approval reports _Promoted N of M candidate baselines_ and
+  leaves the remaining boxes in place. The banner's closing line depends on the
+  token: with the default `GITHUB_TOKEN` it explains the visual check won't
+  re-run on its own and how to kick it; with a custom PAT / App token it notes
+  the check re-runs against the new baselines (and, on a full approval,
+  short-circuits to a fast pass).
+- **⚠️ Failure** — if approval doesn't complete, the banner says so and invites a
+  retry. The approve boxes are already re-tickable (they're unticked the instant
+  approval starts).
+
+These edits are made with the default `GITHUB_TOKEN` and always leave every
+approve checkbox **unticked**, so the bot can never edit its own comment into a
+shape that re-triggers the approve workflow.
+
 Both paths use the same workflow. Copy this into
 `.github/workflows/tuffgal-approve.yml`:
 

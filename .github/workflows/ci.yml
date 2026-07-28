@@ -103,9 +103,10 @@ jobs:
   # file walk, frame derivation, and deletions set-difference (baseline-tree.js),
   # the permission-gate trigger/actor resolution (resolve-approver.js), the
   # fail-closed candidate-artifact selection (select-candidate.js), the
-  # per-baseline candidate filtering (filter-candidates.js), and the re-run
-  # check-shortcut gate + deletion folding (check-shortcut.js). The
-  # approve/scripts/*.test.js glob runs all five. No live GitHub run needed; no
+  # per-baseline candidate filtering (filter-candidates.js), the re-run
+  # check-shortcut gate + deletion folding (check-shortcut.js), and the
+  # loop-safe sticky-comment status transforms (report-comment.js). The
+  # approve/scripts/*.test.js glob runs all six. No live GitHub run needed; no
   # deps beyond Node's built-in node:test + node:assert. Also unit-locks the
   # subdir-frame correctness alongside the approve-subdir-frame smoke job below.
   approve-scripts-unit:
@@ -128,11 +129,13 @@ jobs:
   # `GITHUB_ACTION_PATH` resolves to a nonexistent path and crashes the step at
   # runtime. The comment-gated approve flow can't run in CI, so this job is the
   # only tripwire against the require-blocker regression: it locks the
-  # documented-correct idiom in source for all five approve modules —
+  # documented-correct idiom in source for all six approve modules —
   # baseline-tree.js (commit step), resolve-approver.js (permission gate),
   # select-candidate.js (download step), filter-candidates.js (per-baseline
-  # filter step), and check-shortcut.js (required in both the filter step, for
-  # the deletion count, and the commit step, for the shortcut gate)
+  # filter step), check-shortcut.js (required in both the filter step, for
+  # the deletion count, and the commit step, for the shortcut gate), and
+  # report-comment.js (the in-flight / milestone / final / failure
+  # sticky-comment status steps)
   # — asserting the composite passes its `github.action_path` through the
   # step env as ACTION_PATH and each script requires from that.
   approve-require-source-lock:
@@ -157,7 +160,7 @@ jobs:
           # shellcheck disable=SC2016
           good_suffix='.js`)'
           bad_prefix='process.env.GITHUB_ACTION_PATH}/scripts/'
-          for mod in baseline-tree resolve-approver select-candidate filter-candidates check-shortcut; do
+          for mod in baseline-tree resolve-approver select-candidate filter-candidates check-shortcut report-comment; do
             if ! grep -Fq "${good_prefix}${mod}${good_suffix}" approve/action.yml; then
               echo "approve/action.yml must require $mod.js via process.env.ACTION_PATH." >&2
               exit 1
