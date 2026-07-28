@@ -13,6 +13,10 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 - The Deleted section now links the report's deleted-baselines heading when a preview published
 - The sticky PR comment is now breakpoint-aware: when a run spans more than one breakpoint, the Changed and New tables show one thumbnail row per drifted breakpoint and the Deleted, Failed, and per-story approve-checkbox lines name which breakpoints drifted; a single-breakpoint run renders exactly as before. Deleted entries are also grouped per story, so a story removed at several breakpoints is listed once instead of once per breakpoint
 
+### Fixed
+
+- The main action now skips its own redundant rerun after a full baseline approval even when the approve step pushes with a custom PAT / GitHub App token. v1.5.0's shortcut only ever covered the default `GITHUB_TOKEN` path (where the push fires no workflow, so nothing reran); a PAT / App-token push _does_ retrigger the visual workflow, and that rerun re-ran the whole suite against a tree byte-identical to the one just approved. The action now recognizes a same-repo full-approval commit (a `Tuffgal-Full-Approval` trailer, a single matching parent, and a baselines-only diff) and reports `outcome=pass` with a new `short-circuited` output — and a distinct compact PR comment — instead of re-running Playwright. A fork PR, merge commit, or any commit that also touches source falls through to a normal run
+
 ## [v1.5.0] - 2026-07-24
 
 ### Added

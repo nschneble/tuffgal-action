@@ -143,6 +143,16 @@ review) > `pass`.
 
 ## What it does, step by step
 
+On a PR event, a fast pre-check runs first: it inspects the head commit, and if
+that commit is a same-repo **full-approval** commit that only promotes
+already-approved baselines (a `Tuffgal-Full-Approval` trailer, a single matching
+parent, and a diff confined to `baselines-path`), the action skips steps 1–6
+entirely and reports `outcome=pass` with `short-circuited: true` — the promoted
+tree is byte-identical to the run that was already approved, so re-running it
+would reproduce the same result. Anything ambiguous (a fork PR, a merge commit, a
+commit that also touches source, an API error) falls through to the normal run
+below. Otherwise:
+
 1. `actions/setup-node@v4` with the requested Node version and npm cache
 2. `npm ci` in `working-directory`
 3. `npx playwright install --with-deps chromium` (unless `install-browsers: false`)
@@ -291,6 +301,25 @@ The shortcut is orthogonal to the token choice above. It works with the default
 via GitHub's Checks API rather than relying on the commit to trigger a workflow.
 Mix and match: the shortcut alone (skip the re-run on full clears), a PAT alone
 (let real re-runs clear themselves), both, or neither.
+
+**The PAT path skips too.** The synthesized check above (from v1.5.0) only ever
+helped the default-`GITHUB_TOKEN` path — where the approval push fires no workflow
+at all, so there is nothing to skip. With a PAT / App token the push _does_
+retrigger your visual workflow, and until now that rerun re-ran the whole suite
+against a tree it had just approved. The main action now closes that gap: it
+recognizes its own trigger commit as a full-approval commit and skips the suite
+before it starts, reporting `outcome=pass` and `short-circuited: true` in a few
+seconds instead of re-running Playwright. It gates the skip on a **same-repo**
+push whose commit carries the `Tuffgal-Full-Approval` trailer, has exactly one
+parent equal to that trailer's SHA, and changes only files under your baselines
+directory — a fork PR, a merge commit, or any commit that also touches source
+falls through to a normal run. (This is a build-speed optimization, not a security
+boundary: a same-repo push already requires write access, and anyone with write
+access could approve the baselines for real; the fork exclusion is what keeps an
+untrusted fork author from forging the trailer.) Under a PAT **and** a configured
+`check-name`, both mechanisms fire on the same approval — the synthesized check
+plus a real-but-instant short-circuited run under the same check name — and both
+land green, which is expected.
 
 **Security model.** The approve job is deliberately conservative:
 

@@ -332,6 +332,29 @@ test("pending work renders the approve CTA and the approve-box marker", () => {
   assert.match(body, /@tuffgal approve/);
 });
 
+test("a short-circuited run renders a compact body with NEITHER approve marker", () => {
+  const body = buildCommentBody({
+    shortCircuit: { sha: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0" },
+    runUrl: "https://github.com/o/r/actions/runs/9",
+  });
+  // Marker (so the sticky upsert still finds it), header, pass outcome, the
+  // reviewed short SHA, and a run link.
+  assert.ok(body.startsWith(MARKER + "\n"));
+  assert.match(body, /## 👁️ Tuffgal visual regression/);
+  assert.match(body, /Outcome: \*\*pass\*\*/);
+  assert.match(body, /`a1b2c3d`/);
+  assert.match(
+    body,
+    /\[View the run →\]\(https:\/\/github\.com\/o\/r\/actions\/runs\/9\)/
+  );
+  // Critically: NO approve-checkbox markers of any kind — nothing is pending.
+  assert.doesNotMatch(body, /tuffgal-approve-box/);
+  assert.doesNotMatch(body, /tuffgal-approve-item:/);
+  // And none of the full-layout scaffolding leaked in.
+  assert.doesNotMatch(body, /\| Status \| Count \|/);
+  assert.doesNotMatch(body, /### Approve these changes/);
+});
+
 test("a no-results outcome names the concrete config fix", () => {
   const body = buildCommentBody({
     ...base(),

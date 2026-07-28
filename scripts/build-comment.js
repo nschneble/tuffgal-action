@@ -7,7 +7,8 @@
 // run spanned more than one breakpoint — it returns the final markdown `body`
 // string. Extracted out of the inline `actions/github-script`
 // block so the branch matrix (preview vs none, changed/new/deleted/failed
-// sections, env-mismatch banner, approve CTA, pass/failed/no-results outcomes) is covered
+// sections, env-mismatch banner, approve CTA, pass/failed/no-results outcomes,
+// and the compact short-circuit skipped-suite body) is covered
 // by a `node --test` suite, the same extract-and-unit-test precedent set by the
 // sibling `approve/scripts/*.js` and `pages-push.js` modules.
 //
@@ -199,6 +200,12 @@ const ACTIONABLE = {
 //                 `breakpoint` field) renders byte-identically to the prior
 //                 single-representative-shot output.
 //   runUrl        the workflow-run URL for the fallback link
+//   shortCircuit  optional { sha } — when present, the run was skipped because
+//                 the triggering commit only promotes already-approved
+//                 baselines. Renders a compact body (marker + header + pass +
+//                 one explanatory line naming the reviewed commit + run link)
+//                 and returns early. Carries NO approve markers of any kind:
+//                 nothing is pending, so there is nothing to tick.
 function buildCommentBody({
   outcome,
   counts,
@@ -211,7 +218,26 @@ function buildCommentBody({
   failed,
   multiBreakpoint,
   runUrl,
+  shortCircuit,
 }) {
+  // Short-circuit: skip the full totals/sections layout entirely. Deliberately
+  // emits neither the master `tuffgal-approve-box` nor any per-item
+  // `tuffgal-approve-item:` marker — a stray marker on a nothing-pending comment
+  // could be mistaken for something tickable.
+  if (shortCircuit) {
+    const shortSha = String(shortCircuit.sha || "").slice(0, 7);
+    return [
+      MARKER,
+      "## 👁️ Tuffgal visual regression",
+      "",
+      "Outcome: **pass**",
+      "",
+      `✅ Baselines approved — the visual suite was skipped because this commit only promotes the baselines already reviewed in \`${shortSha}\`. Later pushes will run the suite normally.`,
+      "",
+      `[View the run →](${runUrl})`,
+    ].join("\n");
+  }
+
   const reportUrl = previewUrl ? `${previewUrl}/report/index.html` : null;
   const storyLink = (entry) =>
     reportUrl ? `${reportUrl}#story-${entry.index}` : null;

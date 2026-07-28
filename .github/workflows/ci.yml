@@ -168,6 +168,34 @@ jobs:
             fi
           done
 
+  # Source lock for the Tuffgal-Full-Approval commit trailer — a hand-duplicated
+  # cross-package contract. approve/action.yml (WRITER) stamps the trailer onto a
+  # full-clear approval commit; scripts/run-skip.js (READER, in the MAIN action)
+  # greps for the byte-identical literal to decide whether to skip a redundant
+  # rerun. The two live in separate action packages that cannot cross-require, so
+  # nothing but this job keeps the literal in step — a drift on either side
+  # silently breaks the skip (fail-safe: the suite just reruns) with no unit test
+  # to catch it, since the writer only runs on a live approval and the reader only
+  # on a live PR whose head carries the trailer.
+  approve-trailer-source-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Full-approval trailer literal matches on both sides (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          trailer='Tuffgal-Full-Approval:'
+          if ! grep -Fq "$trailer" approve/action.yml; then
+            echo "approve/action.yml (writer) must stamp the '$trailer' trailer on a full-clear approval commit." >&2
+            exit 1
+          fi
+          if ! grep -Fq "$trailer" scripts/run-skip.js; then
+            echo "scripts/run-skip.js (reader) must key on the byte-identical '$trailer' trailer literal." >&2
+            exit 1
+          fi
+          echo "approve-trailer-source-lock: writer + reader trailer literals match."
+
   # Unit tests for the root scripts/ modules' PURE logic — the Pages-preview
   # push-retry decision (pages-push.js), whose concurrent-PR race can't be
   # exercised in CI, and the sticky-comment body builder (build-comment.js),
@@ -257,6 +285,43 @@ jobs:
           # github-script step) must NOT reappear.
           # shellcheck disable=SC2016
           if grep -Fq 'process.env.GITHUB_ACTION_PATH}/scripts/build-comment.js' action.yml; then
+            echo "action.yml reintroduced the GITHUB_ACTION_PATH require, which resolves to github-script's own dir inside the nested step." >&2
+            exit 1
+          fi
+
+  # Source lock for the module require inside the nested github-script full-
+  # approval shortcut step. `github.action_path` is only supported in composite
+  # actions; inside a nested github-script step `GITHUB_ACTION_PATH` points at
+  # github-script's OWN action dir, not this composite's — so requiring the module
+  # via `GITHUB_ACTION_PATH` resolves to a nonexistent path and crashes the step
+  # at runtime. The shortcut step can't run in CI (needs a live PR whose head is a
+  # full-approval commit), so this job locks the documented-correct idiom in
+  # source: the composite passes its `github.action_path` through the step env as
+  # ACTION_PATH and the script requires from that.
+  run-skip-require-source-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Shortcut step require resolves via the composite action path (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The composite must expose its own dir as ACTION_PATH...
+          # shellcheck disable=SC2016
+          if ! grep -Fq 'ACTION_PATH: ${{ github.action_path }}' action.yml; then
+            echo "action.yml shortcut step must pass github.action_path through the ACTION_PATH step env." >&2
+            exit 1
+          fi
+          # ...and the script must require the module from ACTION_PATH.
+          # shellcheck disable=SC2016
+          if ! grep -Fq 'require(`${process.env.ACTION_PATH}/scripts/run-skip.js`)' action.yml; then
+            echo "action.yml shortcut step must require run-skip.js via process.env.ACTION_PATH." >&2
+            exit 1
+          fi
+          # The broken bare-GITHUB_ACTION_PATH require (wrong dir inside a nested
+          # github-script step) must NOT reappear.
+          # shellcheck disable=SC2016
+          if grep -Fq 'process.env.GITHUB_ACTION_PATH}/scripts/run-skip.js' action.yml; then
             echo "action.yml reintroduced the GITHUB_ACTION_PATH require, which resolves to github-script's own dir inside the nested step." >&2
             exit 1
           fi

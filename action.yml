@@ -106,6 +106,9 @@ outputs:
   preview-url:
     description: "Base URL of the per-PR GitHub Pages preview (e.g. https://owner.github.io/repo/pr-41), or empty when pages-preview is off or publishing was skipped/failed. Append `/report/index.html` for the report."
     value: ${{ steps.pages.outputs.preview-url }}
+  short-circuited:
+    description: "'true' when the visual suite was skipped because the triggering commit only promotes already-approved baselines (a same-repo full-approval commit); 'false' on every normal run."
+    value: ${{ steps.outcome.outputs.short-circuited }}
   total:
     description: Total number of stories executed.
     value: ${{ steps.outcome.outputs.total }}
@@ -113,7 +116,87 @@ outputs:
 runs:
   using: composite
   steps:
+    # Fast full-approval short-circuit. When a baseline approval is pushed to the
+    # PR branch with a custom PAT / App token, GitHub retriggers this workflow and
+    # the whole suite would rerun against a tree byte-identical to the one just
+    # approved. Inspect the head commit ONCE (getCommit returns its message,
+    # parents, and up to 300 changed files): if it is a same-repo full-approval
+    # commit — the Tuffgal-Full-Approval trailer, a single matching parent, and a
+    # baselines-only diff — skip the expensive steps and emit a fast pass. The
+    # pure, security-sensitive decision lives in scripts/run-skip.js; every
+    # ambiguous / malformed / API-error case fails SAFE (skip='false' -> the full
+    # suite runs as today). Only fires on a pull_request event; on any other event
+    # this step is skipped and its empty `skip` output leaves all steps running.
+    - name: Skip the suite when this commit only promotes approved baselines
+      id: shortcut
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        # Pass the COMPOSITE's action path through the step env: inside this
+        # nested github-script step GITHUB_ACTION_PATH points at github-script's
+        # own dir, not ours, so the module require below reads ACTION_PATH.
+        # (Source-locked by ci.yml run-skip-require-source-lock.)
+        ACTION_PATH: ${{ github.action_path }}
+        TUFFGAL_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        TUFFGAL_BASELINES_PATH: ${{ inputs.baselines-path }}
+      with:
+        script: |
+          // Nested github-script step: require via the composite's ACTION_PATH
+          // (passed through this step's env above), never bare GITHUB_ACTION_PATH.
+          const { decideRunSkip, baselinesPrefixFrom } = require(`${process.env.ACTION_PATH}/scripts/run-skip.js`);
+
+          const { owner, repo } = context.repo;
+          const pr = context.payload.pull_request;
+
+          // Fail-SAFE default: run the full suite. Only a fully-verified
+          // baselines-only approval commit flips skip to true.
+          const runFullSuite = (reason) => {
+            core.info(`Running the full Tuffgal suite: ${reason}.`);
+            core.setOutput('skip', 'false');
+            core.setOutput('approved-sha', '');
+          };
+
+          // One API call returns the commit message, its parent SHAs, and up to
+          // 300 changed files; a commit that changed more paginates (length 300
+          // here), which decideRunSkip treats as truncated / unverifiable.
+          let data;
+          try {
+            const commit = await github.rest.repos.getCommit({ owner, repo, ref: pr.head.sha });
+            data = commit.data;
+          } catch (error) {
+            // Never fail the job for a shortcut miss — fall back to the full run.
+            runFullSuite(`could not read the head commit (${error.message})`);
+            return;
+          }
+
+          const changedFiles = data.files || [];
+          const decision = decideRunSkip({
+            message: (data.commit && data.commit.message) || '',
+            parentShas: (data.parents || []).map((parent) => parent.sha),
+            // A fork PR's head lives in a different repo — never short-circuit it.
+            headRepoFullName: (pr.head.repo && pr.head.repo.full_name) || '',
+            baseRepoFullName: (pr.base.repo && pr.base.repo.full_name) || '',
+            files: changedFiles.map((file) => ({ path: file.filename })),
+            filesTruncated: changedFiles.length >= 300,
+            baselinesPrefix: baselinesPrefixFrom(
+              process.env.TUFFGAL_WORKING_DIRECTORY,
+              process.env.TUFFGAL_BASELINES_PATH
+            ),
+          });
+
+          if (!decision.skip) {
+            runFullSuite(decision.reason);
+            return;
+          }
+          // Verified: same-repo full-approval commit whose single parent matches
+          // the trailer and whose diff is baselines-only. approved-sha is that
+          // parent (the reviewed commit) — guaranteed to be parents[0] here.
+          core.info(`Skipping the Tuffgal suite — ${decision.reason}. The promoted tree is byte-identical to the approved run.`);
+          core.setOutput('skip', 'true');
+          core.setOutput('approved-sha', data.parents[0].sha);
+
     - name: Set up Node.js
+      if: steps.shortcut.outputs.skip != 'true'
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: ${{ inputs.node-version }}
@@ -121,18 +204,19 @@ runs:
         cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
 
     - name: Install dependencies
+      if: steps.shortcut.outputs.skip != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: npm ci
 
     - name: Install Playwright browsers
-      if: inputs.install-browsers == 'true'
+      if: steps.shortcut.outputs.skip != 'true' && inputs.install-browsers == 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: npx playwright install --with-deps chromium
 
     - name: Run setup script
-      if: inputs.setup-script != ''
+      if: steps.shortcut.outputs.skip != 'true' && inputs.setup-script != ''
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -141,6 +225,7 @@ runs:
 
     - name: Run Tuffgal
       id: harness
+      if: steps.shortcut.outputs.skip != 'true'
       continue-on-error: true
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -169,6 +254,10 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         TUFFGAL_REPORT_PATH: ${{ inputs.report-path }}
+        # The shortcut step's decision. Empty on a non-pull_request event (the
+        # step didn't run) — treated as 'not skipped', so the normal parse runs.
+        SHORTCUT_SKIP: ${{ steps.shortcut.outputs.skip }}
+        SHORTCUT_SHA: ${{ steps.shortcut.outputs.approved-sha }}
       run: |
         set -euo pipefail
         results="$TUFFGAL_REPORT_PATH/results.json"
@@ -188,6 +277,7 @@ runs:
             echo "env-mismatch=false"
             echo "pending=false"
             echo "outcome=no-results"
+            echo "short-circuited=false"
           } >> "$GITHUB_OUTPUT"
           {
             echo "## Tuffgal"
@@ -195,6 +285,34 @@ runs:
             echo "The run wrote no \`results.json\` — check the Run Tuffgal step log and confirm \`report-path\` matches \`paths.report\` in tuffgal.config.ts. Treating as failed."
           } >> "$GITHUB_STEP_SUMMARY"
         }
+
+        # Short-circuit branch, evaluated BEFORE the missing-file guard. The
+        # shortcut step verified this commit only promotes already-approved
+        # baselines, so the expensive steps were skipped and there is (correctly)
+        # no results.json to parse — the missing-file guard would otherwise
+        # mis-map that to no-results. Emit a zeroed passing contract flagged
+        # short-circuited so the comment step renders the "suite skipped" body and
+        # the surface step (outcome=pass) exits 0.
+        if [ "${SHORTCUT_SKIP:-}" = "true" ]; then
+          {
+            echo "passed=0"
+            echo "changed=0"
+            echo "failed=0"
+            echo "new=0"
+            echo "deleted=0"
+            echo "total=0"
+            echo "env-mismatch=false"
+            echo "pending=false"
+            echo "outcome=pass"
+            echo "short-circuited=true"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Tuffgal"
+            echo ""
+            echo "Skipped the visual suite — the baselines were already fully approved in \`${SHORTCUT_SHA:0:7}\`, and this commit only promotes them. Later pushes run the suite normally."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
 
         # No results file, or a file that isn't a valid JSON object (empty,
         # truncated, or otherwise malformed). Validate ONCE up front: without
@@ -242,6 +360,7 @@ runs:
           echo "env-mismatch=$env_mismatch"
           echo "pending=$pending"
           echo "outcome=$outcome"
+          echo "short-circuited=false"
         } >> "$GITHUB_OUTPUT"
 
         {
@@ -535,6 +654,11 @@ runs:
         FAILED: ${{ steps.outcome.outputs.failed }}
         TOTAL: ${{ steps.outcome.outputs.total }}
         ENV_MISMATCH: ${{ steps.outcome.outputs.env-mismatch }}
+        # When the suite was short-circuited (baselines already fully approved),
+        # render the compact "suite skipped" body naming the reviewed commit
+        # instead of the full totals/sections layout.
+        SHORT_CIRCUITED: ${{ steps.outcome.outputs.short-circuited }}
+        APPROVED_SHA: ${{ steps.shortcut.outputs.approved-sha }}
       with:
         script: |
           const fs = require('fs');
@@ -557,6 +681,9 @@ runs:
             total: process.env.TOTAL || '0',
           };
           const envMismatch = process.env.ENV_MISMATCH === 'true';
+          // A short-circuited run skipped the suite entirely, so results.json does
+          // not exist — take the compact body path and skip the results read below.
+          const shortCircuited = process.env.SHORT_CIRCUITED === 'true';
 
           // A published preview turns every image path + story into a real URL.
           // Empty when pages-preview is off or publishing failed → the comment
@@ -585,7 +712,7 @@ runs:
           // array — the SAME ordinal template.ts renders as `id="story-<index>"`,
           // so `#story-<index>` deep-links land on the right story.
           let changed = [], added = [], deleted = [], failed = [], mismatchKeys = [], multiBreakpoint = false;
-          try {
+          if (!shortCircuited) try {
             const r = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
             // Distinct, non-empty breakpoint names this run captured at, across
             // every story action AND every deleted-baseline record. More than one
@@ -674,11 +801,14 @@ runs:
 
           // The pure body build — sections, thumbnails, env-mismatch banner,
           // totals table, approve CTA, and outcome fallbacks all live in the
-          // module so the branch matrix is unit-tested.
-          const body = buildCommentBody({
-            outcome, counts, envMismatch, mismatchKeys, previewUrl,
-            changed, added, deleted, failed, multiBreakpoint, runUrl,
-          });
+          // module so the branch matrix is unit-tested. A short-circuited run
+          // renders the compact skipped-suite body (no results, NO approve boxes).
+          const body = shortCircuited
+            ? buildCommentBody({ shortCircuit: { sha: process.env.APPROVED_SHA || '' }, runUrl })
+            : buildCommentBody({
+                outcome, counts, envMismatch, mismatchKeys, previewUrl,
+                changed, added, deleted, failed, multiBreakpoint, runUrl,
+              });
           const issue_number = context.payload.pull_request.number;
 
           // Posting the comment must never fail the job — a missing

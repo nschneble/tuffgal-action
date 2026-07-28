@@ -712,13 +712,45 @@ runs:
             return;
           }
 
+          // Compute the full-clear decision UP FRONT so the SAME boolean gates
+          // both the commit-message trailer (below) and the check-synthesis block
+          // further down. These read only already-available env counts, never the
+          // commit result. Deletions always resolve on any approve trigger
+          // (`--prune` is unconditional), so the run's deleted count is folded into
+          // BOTH keptCount and pendingTotal: it cancels out in the strict-equality
+          // gate (can never flip a partial into a full clear) and rescues the
+          // deletion-only full clear where the candidate-dir count is 0.
+          // Number('') === 0, so a missing DELETED_COUNT degrades fail-safe; env
+          // counts are strings and the module fail-closes NaN / non-integer input.
+          const checkNames = parseCheckNames(process.env.CHECK_NAME);
+          const deletedCount = Number(process.env.DELETED_COUNT);
+          const { pendingTotal, keptCount } = foldDeletions({
+            candidateCount: Number(process.env.CANDIDATE_COUNT),
+            promotedCount: Number(process.env.PROMOTED_COUNT),
+            deletedCount,
+          });
+          const fullClear = shouldSynthesizeCheck({ pendingTotal, keptCount });
+
+          // On a FULL clear, append the Tuffgal-Full-Approval trailer naming the
+          // parent (head) SHA the candidates were captured against — the SAME SHA
+          // passed as `parents` below. The MAIN action's scripts/run-skip.js reader
+          // greps for this exact literal (HAND-DUPLICATED cross-package contract;
+          // ci.yml approve-trailer-source-lock pins the two copies byte-equal) and,
+          // on the consumer's next same-repo push, skips re-running the
+          // byte-identical suite — closing the PAT-token rerun gap the
+          // GITHUB_TOKEN-only #31 check-synthesis shortcut never covered. A partial
+          // approve keeps today's exact single-line message, byte-for-byte.
+          const message = fullClear
+            ? `chore(tuffgal): approve candidate baselines\n\nTuffgal-Full-Approval: ${headSha}`
+            : 'chore(tuffgal): approve candidate baselines';
+
           const headCommit = await github.rest.git.getCommit({ owner, repo, commit_sha: headSha });
           const newTree = await github.rest.git.createTree({
             owner, repo, base_tree: headCommit.data.tree.sha, tree,
           });
           const commit = await github.rest.git.createCommit({
             owner, repo,
-            message: 'chore(tuffgal): approve candidate baselines',
+            message,
             tree: newTree.data.sha,
             parents: [headSha],
             author: { name: process.env.GIT_USER_NAME, email: process.env.GIT_USER_EMAIL },
@@ -744,31 +776,16 @@ runs:
           // the success comment's commit link below.
           const shortSha = commit.data.sha.slice(0, 7);
 
-          // Re-run shortcut. We are here ONLY because a real commit landed and the
-          // ref fast-forwarded (tree.length === 0 returned early; an updateRef
-          // failure returned above), so commit.data.sha is a genuine new SHA. If a
-          // `check-name` is configured and this approval was a FULL clear, mark that
-          // required check passing directly on the new SHA — the committed tree is
-          // byte-identical to the run that captured the candidates, so the rerun is
-          // redundant. The pure module owns both decisions; a partial approve or an
-          // empty check-name yields no check. env counts are strings, so coerce with
-          // Number — the module fail-closes NaN / non-integer input.
-          //
-          // Deletions always resolve on ANY approve trigger (`--prune` is
-          // unconditional; they are never gated by the per-item selection), so the
-          // run's deleted count is folded into BOTH keptCount and pendingTotal: it
-          // cancels out in the strict-equality gate (can never flip a partial into a
-          // full clear) and rescues the deletion-only full clear where the filter
-          // step's candidate-dir count is 0. Number('') === 0, so a missing
-          // DELETED_COUNT degrades fail-safe (deletion-only simply gets no shortcut).
-          const checkNames = parseCheckNames(process.env.CHECK_NAME);
-          const deletedCount = Number(process.env.DELETED_COUNT);
-          const { pendingTotal, keptCount } = foldDeletions({
-            candidateCount: Number(process.env.CANDIDATE_COUNT),
-            promotedCount: Number(process.env.PROMOTED_COUNT),
-            deletedCount,
-          });
-          const fullClear = shouldSynthesizeCheck({ pendingTotal, keptCount });
+          // Re-run shortcut (check synthesis). We are here ONLY because a real
+          // commit landed and the ref fast-forwarded (tree.length === 0 returned
+          // early; an updateRef failure returned above), so commit.data.sha is a
+          // genuine new SHA. `checkNames` / `fullClear` were computed before the
+          // commit above (they read only env counts, and the trailer already used
+          // `fullClear`). If a `check-name` is configured and this approval was a
+          // FULL clear, mark that required check passing directly on the new SHA —
+          // the committed tree is byte-identical to the run that captured the
+          // candidates, so a rerun is redundant. A partial approve or an empty
+          // check-name yields no check.
           const synthesizedNames = [];
           if (checkNames.length > 0 && fullClear) {
             const summary = [
