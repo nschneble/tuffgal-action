@@ -126,7 +126,7 @@ contract the CI-owned-baselines model asks of a consumer.
 ## Outputs
 
 | Name              | Description                                                                                                                                                                         |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `changed`         | Number of stories whose committed baseline changed (pixels or a11y snapshot)                                                                                                        |
 | `deleted`         | Number of orphaned baseline entries with no matching story/action (pruned on approve)                                                                                               |
 | `env-mismatch`    | `'true'` when the capture environment in `baselines/manifest.json` no longer matches this CI run (expect a full re-approve)                                                         |

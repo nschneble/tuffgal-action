@@ -6,20 +6,28 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 ## [Unreleased]
 
+_Nothing just yet_
+
+## [v1.6.0] - 2026-07-28
+
 ### Added
 
-- The approve action now edits the sticky report comment in place as an approval runs, so a watching maintainer sees live progress instead of a frozen comment. It moves through an in-flight banner (⚙️ approving now), a milestone banner (📦 candidates fetched, committing), and a final banner: a full approval reports ✅ all baselines approved, links the commit, and strips the now-pointless approve checkbox; a partial approval reports how many of the candidates were promoted, rewrites each just-approved story to a non-interactive ✅ Approved line (its checkbox and hidden marker removed so it can't be re-ticked), and relabels the top-level box to Approve remaining baselines so only the still-pending stories stay tickable — or strips the whole approve section when the partial happened to cover everything. A failure surfaces a ⚠️ banner inviting a retry. Every edit uses the default `GITHUB_TOKEN` and leaves all approve checkboxes unticked, so the bot can never re-trigger the approve workflow on its own comment
+The approve action now edits the sticky report comment in place as an
+approval runs, so a watching maintainer sees live progress instead of a
+frozen comment.
 
 ### Changed
 
-- The sticky PR comment's Changed table drops its Diff column — side-by-side baseline / actual is enough, and the full diff still lives in the linked report
-- The sticky PR comment now lists every Failed story individually, with its failure message and (when a preview published) a deep link to that story in the report
-- The Deleted section now links the report's deleted-baselines heading when a preview published
-- The sticky PR comment is now breakpoint-aware: when a run spans more than one breakpoint, the Changed and New tables show one thumbnail row per drifted breakpoint and the Deleted, Failed, and per-story approve-checkbox lines name which breakpoints drifted; a single-breakpoint run renders exactly as before. Deleted entries are also grouped per story, so a story removed at several breakpoints is listed once instead of once per breakpoint
+- The deleted section now links the report's deleted-baselines heading when a preview published
+- The sticky PR comment's changed table drops its diff column
+- The sticky PR comment is now breakpoint-aware
+- The sticky PR comment now lists every failed story individually
 
 ### Fixed
 
-- The main action now skips its own redundant rerun after a full baseline approval even when the approve step pushes with a custom PAT / GitHub App token. v1.5.0's shortcut only ever covered the default `GITHUB_TOKEN` path (where the push fires no workflow, so nothing reran); a PAT / App-token push _does_ retrigger the visual workflow, and that rerun re-ran the whole suite against a tree byte-identical to the one just approved. The action now recognizes a same-repo full-approval commit (a `Tuffgal-Full-Approval` trailer, a single matching parent, and a baselines-only diff) and reports `outcome=pass` with a new `short-circuited` output — and a distinct compact PR comment — instead of re-running Playwright. A fork PR, merge commit, or any commit that also touches source falls through to a normal run
+The main action now skips its own redundant rerun after a full baseline
+approval, even when the approve step pushes with a PAT. v1.5.0's shortcut
+only ever covered the default `GITHUB_TOKEN` path.
 
 ## [v1.5.0] - 2026-07-24
 
@@ -218,7 +226,8 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.6.0...HEAD
+[v1.6.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.6.0
 [v1.5.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.5.0
 [v1.4.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.4.1
 [v1.4.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.4.0
