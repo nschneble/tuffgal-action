@@ -25,6 +25,7 @@ const {
   hasTickedApproveMarker,
   withStatusBanner,
   stripApproveCta,
+  applyPartialApproval,
 } = require('./report-comment.js');
 
 // The real trigger parser + the real body builder — cross-file requires are fine
@@ -264,6 +265,136 @@ test('stripApproveCta: is idempotent (no CTA heading -> unchanged)', () => {
   assert.strictEqual(stripApproveCta(stripApproveCta(body)), body);
 });
 
+// --- applyPartialApproval ------------------------------------------------- //
+
+// The exact top-level CTA box line build-comment.js emits (its buildCommentBody
+// approve-box line), and the relabeled form applyPartialApproval swaps its human
+// text to while leaving the marker + `[ ]` prefix byte-identical.
+const TOP_BOX_ORIGINAL =
+  '- [ ] <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit the candidate baselines to this PR (requires write access).';
+const TOP_BOX_RELABELED =
+  '- [ ] <!-- tuffgal-approve-box --> **Approve remaining baselines** — tick to commit the remaining candidate baselines to this PR (requires write access).';
+
+// A realistic unticked partial-approve body: a Changed section with three per-item
+// boxes and the top-level CTA box (the shape untickApproveBoxes hands to
+// applyPartialApproval).
+function partialBody(items) {
+  return [
+    REPORT_MARKER,
+    '## 👁️ Tuffgal visual regression',
+    '',
+    `### Changed (${items.length})`,
+    '',
+    ...items,
+    '',
+    '### Approve these changes',
+    '',
+    TOP_BOX_ORIGINAL,
+    '',
+    '…or comment `@tuffgal approve`.',
+    '',
+    '[View the run →](https://example/run)',
+  ].join('\n');
+}
+
+test('applyPartialApproval: converts a per-item box to a checkless "✅ Approved" line and drops its marker', () => {
+  const body = partialBody(['- [ ] <!-- tuffgal-approve-item:a --> Approve **Alpha**', '- [ ] <!-- tuffgal-approve-item:b --> Approve **Bravo**']);
+  const out = applyPartialApproval(body, ['a']);
+  assert.match(out, /^- ✅ Approved \*\*Alpha\*\*$/m);
+  // The approved line carries neither the item marker nor any checkbox syntax.
+  assert.doesNotMatch(out, /tuffgal-approve-item:a/);
+  const alphaLine = out.split('\n').find((line) => line.includes('Alpha'));
+  assert.ok(!alphaLine.includes('[ ]') && !alphaLine.includes('<!--'), 'approved line must have no checkbox or marker');
+});
+
+test('applyPartialApproval: a two-key item is approved ONLY when BOTH keys are in the selection', () => {
+  const body = partialBody(['- [ ] <!-- tuffgal-approve-item:a,b --> Approve **Combo**']);
+  // Both keys approved -> converted.
+  assert.match(applyPartialApproval(body, ['a', 'b']), /^- ✅ Approved \*\*Combo\*\*$/m);
+  // Only one of the two keys approved -> left completely untouched.
+  const partial = applyPartialApproval(body, ['a']);
+  assert.match(partial, /^- \[ \] <!-- tuffgal-approve-item:a,b --> Approve \*\*Combo\*\*$/m);
+  assert.doesNotMatch(partial, /✅ Approved \*\*Combo\*\*/);
+});
+
+test('applyPartialApproval: some items approved, some left alone, in the same body', () => {
+  const body = partialBody([
+    '- [ ] <!-- tuffgal-approve-item:a --> Approve **Alpha**',
+    '- [ ] <!-- tuffgal-approve-item:b --> Approve **Bravo**',
+    '- [ ] <!-- tuffgal-approve-item:c --> Approve **Charlie**',
+  ]);
+  const out = applyPartialApproval(body, ['a', 'c']);
+  assert.match(out, /^- ✅ Approved \*\*Alpha\*\*$/m);
+  assert.match(out, /^- ✅ Approved \*\*Charlie\*\*$/m);
+  // Bravo was not approved: still an unticked, re-tickable box with its marker.
+  assert.match(out, /^- \[ \] <!-- tuffgal-approve-item:b --> Approve \*\*Bravo\*\*$/m);
+});
+
+test('applyPartialApproval: an approved item preserves its breakpoint suffix verbatim', () => {
+  const body = partialBody(['- [ ] <!-- tuffgal-approve-item:card-hover,card-focus --> Approve **Card** (mobile, desktop)']);
+  const out = applyPartialApproval(body, ['card-hover', 'card-focus']);
+  assert.match(out, /^- ✅ Approved \*\*Card\*\* \(mobile, desktop\)$/m);
+  assert.doesNotMatch(out, /tuffgal-approve-item/);
+});
+
+test('applyPartialApproval: relabels the top-level box text only — marker + `[ ]` state byte-identical', () => {
+  const body = partialBody([
+    '- [ ] <!-- tuffgal-approve-item:a --> Approve **Alpha**',
+    '- [ ] <!-- tuffgal-approve-item:b --> Approve **Bravo**',
+  ]);
+  const out = applyPartialApproval(body, ['a']);
+  // Exact before/after: only the human label prose differs.
+  assert.ok(!out.includes(TOP_BOX_ORIGINAL), 'original top-level label should be gone');
+  assert.ok(out.includes(TOP_BOX_RELABELED), 'top-level box should carry the relabeled prose');
+  // The marker + checkbox prefix is byte-identical (still a valid unticked box).
+  assert.match(out, /^- \[ \] <!-- tuffgal-approve-box -->/m);
+});
+
+test('applyPartialApproval: an empty-payload item box approves nothing and stays pending', () => {
+  const body = partialBody([
+    '- [ ] <!-- tuffgal-approve-item: --> Approve **Nameless**',
+    '- [ ] <!-- tuffgal-approve-item:a --> Approve **Alpha**',
+  ]);
+  const out = applyPartialApproval(body, ['a']);
+  // The empty-payload box has no keys, so it is never marked approved.
+  assert.match(out, /^- \[ \] <!-- tuffgal-approve-item: --> Approve \*\*Nameless\*\*$/m);
+  assert.doesNotMatch(out, /✅ Approved \*\*Nameless\*\*/);
+  // ...and because an unapproved box remains, the top-level box is relabeled, not stripped.
+  assert.ok(out.includes(TOP_BOX_RELABELED));
+});
+
+test('applyPartialApproval: a partial that covers EVERY item strips the whole CTA (no dangling top-level box)', () => {
+  const body = partialBody([
+    '- [ ] <!-- tuffgal-approve-item:a --> Approve **Alpha**',
+    '- [ ] <!-- tuffgal-approve-item:b --> Approve **Bravo**',
+  ]);
+  const out = applyPartialApproval(body, ['a', 'b']);
+  // Both items converted...
+  assert.match(out, /^- ✅ Approved \*\*Alpha\*\*$/m);
+  assert.match(out, /^- ✅ Approved \*\*Bravo\*\*$/m);
+  // ...and with nothing left to approve, the CTA (heading + top-level box) is gone.
+  assert.doesNotMatch(out, /### Approve these changes/);
+  assert.doesNotMatch(out, /tuffgal-approve-box/);
+  assert.doesNotMatch(out, /Approve remaining baselines/);
+});
+
+test('applyPartialApproval: output NEVER carries a ticked approve marker (loop-safe)', () => {
+  const body = partialBody([
+    '- [ ] <!-- tuffgal-approve-item:a --> Approve **Alpha**',
+    '- [ ] <!-- tuffgal-approve-item:b --> Approve **Bravo**',
+  ]);
+  assert.strictEqual(hasTickedApproveMarker(applyPartialApproval(body, ['a'])), false);
+  assert.strictEqual(hasTickedApproveMarker(applyPartialApproval(body, ['a', 'b'])), false);
+});
+
+test('applyPartialApproval: tolerates a non-array selection (defensive) — no item is approved', () => {
+  const body = partialBody(['- [ ] <!-- tuffgal-approve-item:a --> Approve **Alpha**']);
+  const out = applyPartialApproval(body, undefined);
+  // No keys approved, so the box stays pending and the top-level box is relabeled.
+  assert.match(out, /^- \[ \] <!-- tuffgal-approve-item:a --> Approve \*\*Alpha\*\*$/m);
+  assert.ok(out.includes(TOP_BOX_RELABELED));
+});
+
 // --- integration: transformed body is declined by the REAL parser --------- //
 
 // Build a realistic sticky body with both the approve-all box and a per-item box,
@@ -340,6 +471,84 @@ test('integration: full-approve transform (untick + strip CTA + banner) is loop-
   assert.strictEqual(hasTickedApproveMarker(transformed), false);
   assert.doesNotMatch(transformed, /### Approve these changes/);
   assert.doesNotMatch(transformed, /tuffgal-approve-box/);
+});
+
+// Build a realistic TWO-story sticky body (Button + Card, distinct action keys),
+// then TICK only the Button per-item box — a genuine partial-approve trigger state.
+function partiallyTickedTwoStoryBody() {
+  const body = buildCommentBody({
+    outcome: 'changed',
+    counts: { passed: '0', changed: '2', new: '0', deleted: '0', failed: '0', total: '2' },
+    envMismatch: false,
+    mismatchKeys: [],
+    previewUrl: '',
+    changed: [
+      { index: 1, name: 'Button', shots: [{}], actionKeys: ['button-primary'] },
+      { index: 2, name: 'Card', shots: [{}], actionKeys: ['card-hover'] },
+    ],
+    added: [],
+    deleted: [],
+    failed: [],
+    multiBreakpoint: false,
+    runUrl: 'https://example/run',
+  });
+  // A maintainer ticks ONLY the Button item box (a partial approve of button-primary).
+  return body.replace('- [ ] <!-- tuffgal-approve-item:button-primary', '- [x] <!-- tuffgal-approve-item:button-primary');
+}
+
+test('integration: the real partial-approve chain relabels approved items and stays loop-safe against the REAL parser', () => {
+  const ticked = partiallyTickedTwoStoryBody();
+  // Sanity: the ticked Button box really is a partial trigger for button-primary.
+  const sanity = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body: ticked, user: { login: 'tuffgal[bot]' } },
+    issue: { number: 7, pull_request: { url: 'https://api/pulls/7' } },
+    contextActor: 'maintainer',
+  });
+  assert.strictEqual(sanity.proceed, true);
+  assert.deepStrictEqual(sanity.selection, ['button-primary']);
+
+  // The REAL production final-report chain on a committed partial approve:
+  // untick -> applyPartialApproval(selection) -> banner.
+  const transformed = withStatusBanner(applyPartialApproval(untickApproveBoxes(ticked), ['button-primary']), [
+    '> ✅ **Promoted 1 of 2 candidate baselines** as [`abc1234`](https://example/commit/abc1234).',
+  ]);
+
+  // Button is now a checkless "✅ Approved" line with its marker gone entirely.
+  assert.match(transformed, /^- ✅ Approved \*\*Button\*\*$/m);
+  assert.doesNotMatch(transformed, /tuffgal-approve-item:button-primary/);
+  // Card is untouched: still an unticked, re-tickable box.
+  assert.match(transformed, /^- \[ \] <!-- tuffgal-approve-item:card-hover --> Approve \*\*Card\*\*$/m);
+  // The top-level box was relabeled to "remaining", marker + `[ ]` intact.
+  assert.match(transformed, /^- \[ \] <!-- tuffgal-approve-box --> \*\*Approve remaining baselines\*\*/m);
+
+  // Loop safety: our own guard AND the REAL parser both decline the transformed
+  // body fed straight back as a human `edited` event (nothing is ticked).
+  assert.strictEqual(hasTickedApproveMarker(transformed), false);
+  const replay = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body: transformed, user: { login: 'tuffgal[bot]' } },
+    issue: { number: 7, pull_request: { url: 'https://api/pulls/7' } },
+    contextActor: 'maintainer',
+  });
+  assert.strictEqual(replay.proceed, false);
+  assert.strictEqual(replay.reason, 'no-trigger');
+
+  // A fresh tick on the STILL-PRESENT Card box parses as a valid partial trigger —
+  // for card-hover only; the already-approved button-primary marker is gone, so it
+  // can never re-enter a selection.
+  const cardTicked = transformed.replace('- [ ] <!-- tuffgal-approve-item:card-hover', '- [x] <!-- tuffgal-approve-item:card-hover');
+  const followUp = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body: cardTicked, user: { login: 'tuffgal[bot]' } },
+    issue: { number: 7, pull_request: { url: 'https://api/pulls/7' } },
+    contextActor: 'maintainer',
+  });
+  assert.strictEqual(followUp.proceed, true);
+  assert.deepStrictEqual(followUp.selection, ['card-hover']);
 });
 
 // --- cross-file lock: TRIGGER_SUBSTRINGS stays in step with the example ---- //

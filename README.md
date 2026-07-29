@@ -209,8 +209,13 @@ the bot edits that same comment in place as the run progresses:
   the approved baselines…_
 - **✅ Final** — after the commit lands. A full approval reports _All baselines
   approved and committed as `<sha>`_ and removes the now-pointless approve
-  checkbox; a partial approval reports _Promoted N of M candidate baselines_ and
-  leaves the remaining boxes in place. The banner's closing line depends on the
+  checkbox; a partial approval reports _Promoted N of M candidate baselines_,
+  rewrites each just-approved story to a non-interactive **✅ Approved** line (its
+  checkbox and hidden marker removed, so it can't be re-ticked or re-trigger the
+  workflow), and relabels the top-level box to **Approve remaining baselines** so
+  only the still-pending stories stay tickable — or, when that partial happened to
+  cover every remaining story, removes the approve section entirely, just like a
+  full approval. The banner's closing line depends on the
   token: with the default `GITHUB_TOKEN` it explains the visual check won't
   re-run on its own and how to kick it; with a custom PAT / App token it notes
   the check re-runs against the new baselines (and, on a full approval,

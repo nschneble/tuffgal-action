@@ -1032,6 +1032,11 @@ runs:
         IS_PARTIAL: ${{ steps.filter.outputs.partial }}
         PROMOTED_COUNT: ${{ steps.filter.outputs.kept }}
         CANDIDATE_COUNT: ${{ steps.filter.outputs.total }}
+        # The JSON-encoded approve selection ('all' for a full approve, or a
+        # string[] of the approved action keys for a partial per-item approve — the
+        # same value the filter step consumes). Only read on the partial path below,
+        # where it is always the key array, to relabel the just-approved item boxes.
+        SELECTION: ${{ steps.gate.outputs.selection }}
         # 'true'/'false' from a GitHub-expression comparison; the token value never
         # reaches the environment. Drives the retrigger tail (default token = the
         # check won't re-run on its own; custom token = it re-runs / short-circuits).
@@ -1043,7 +1048,7 @@ runs:
         # DEFAULT token — GITHUB_TOKEN comment edits never fire workflow events.
         github-token: ${{ github.token }}
         script: |
-          const { untickApproveBoxes, withStatusBanner, stripApproveCta, hasTickedApproveMarker } =
+          const { untickApproveBoxes, withStatusBanner, stripApproveCta, applyPartialApproval, hasTickedApproveMarker } =
             require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
           const { owner, repo } = context.repo;
           const commentId = Number(process.env.COMMENT_ID);
@@ -1058,16 +1063,31 @@ runs:
           try {
             const current = await github.rest.issues.getComment({ owner, repo, comment_id: commentId });
             let body = untickApproveBoxes(current.data.body || '');
+            const isPartial = process.env.IS_PARTIAL === 'true';
+
+            // Partial approve: convert the just-approved per-item boxes to
+            // non-interactive "✅ Approved" lines and relabel the still-pending
+            // top-level box (or strip the whole CTA when this partial happened to
+            // cover every remaining item). Runs for BOTH partial terminal states
+            // below (committed and already-up-to-date) — the ticked items were
+            // genuinely approved either way. A full approve strips the entire CTA
+            // instead (below), so this never touches its body. SELECTION is only the
+            // key array (never 'all') when IS_PARTIAL is true.
+            if (isPartial) {
+              body = applyPartialApproval(body, JSON.parse(process.env.SELECTION));
+            }
             let banner;
 
             if (process.env.NOTHING_TO_COMMIT === 'true') {
               // Benign no-op: the approved tree already matched the head branch, so
               // no new commit was made. On a FULL approve, still strip the whole CTA
               // — there is nothing left to approve either way, matching the
-              // committed-success full-approve path below; a partial keeps its
-              // remaining boxes in place. Restore a stable, non-progress banner (the
-              // boxes stay unticked from above) rather than leaving "committing…".
-              if (process.env.IS_PARTIAL !== 'true') {
+              // committed-success full-approve path below. A partial has already had
+              // its approved item boxes relabeled + its CTA handled by
+              // applyPartialApproval above, so nothing more to do to its body here.
+              // Restore a stable, non-progress banner (the boxes stay unticked from
+              // above) rather than leaving "committing…".
+              if (!isPartial) {
                 body = stripApproveCta(body);
               }
               banner = [
@@ -1079,7 +1099,6 @@ runs:
               const shortSha = process.env.SHORT_SHA;
               const commitUrl = `${context.serverUrl}/${owner}/${repo}/commit/${process.env.COMMIT_SHA}`;
               const tokenIsDefault = process.env.TOKEN_IS_DEFAULT === 'true';
-              const isPartial = process.env.IS_PARTIAL === 'true';
 
               // The retrigger tail. Default token: the check won't re-run on its own
               // (GITHUB_TOKEN pushes fire no workflow) — mirror the separate success

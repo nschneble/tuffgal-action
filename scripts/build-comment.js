@@ -78,6 +78,14 @@ const distinctBreakpoints = (shots) => {
 // free text to `resolve-approver.js`'s `CHECKED_ITEM_BOX` regex, which matches
 // only the literal marker through its `-->` and the tick state — never trailing
 // text — so the suffix can never perturb which keys a ticked box approves.
+//
+// The approve action's `report-comment.js` `applyPartialApproval` also READS this
+// line on a partial approve: it detects an item box by the marker (the
+// load-bearing part), then relabels an approved one to
+// `- ✅ Approved **name** (suffix)`, keying the label off the ` Approve ` prefix +
+// the `**name**` wrapper rendered here. Keep this ` Approve **name**` prose +
+// suffix layout in step with that reader — the same cross-file read-dependency
+// precedent as resolve-approver.js reading the marker above.
 const approveItemCheckbox = (entry, multiBreakpoint) => {
   let line = `- [ ] ${approveItemMarker(entry.actionKeys)} Approve **${escapeHtml(
     entry.name
