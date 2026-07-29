@@ -36,10 +36,15 @@ const REPORT_MARKER = '<!-- tuffgal-report -->';
 const STATUS_OPEN = '<!-- tuffgal-approve-status -->';
 const STATUS_CLOSE = '<!-- /tuffgal-approve-status -->';
 
-// The `### Approve these changes` CTA section heading (see build-comment.js
-// buildCommentBody). On a FULL approve the whole CTA section — heading, the
-// approve-all box, and everything after it (it is always the tail section) — is
-// stripped, because there is nothing left to approve.
+// The `### Approve these changes` CTA section heading. HAND-DUPLICATED,
+// byte-for-byte, from `scripts/build-comment.js`'s buildCommentBody, which
+// hardcodes this same heading for the CTA section it emits; that module lives in
+// the SEPARATE main-action package this one cannot cross-require (the same
+// documented hand-duplication precedent as REPORT_MARKER above). Keep
+// byte-identical to that copy — stripApproveCta below matches this exact literal.
+// On a FULL approve the whole CTA section — heading, the approve-all box, and
+// everything after it (it is always the tail section) — is stripped, because there
+// is nothing left to approve.
 const CTA_HEADING = '### Approve these changes';
 
 // Ticked approve boxes, in the SAME syntactic shapes resolve-approver.js reads

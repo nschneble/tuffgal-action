@@ -427,6 +427,11 @@ function buildCommentBody({
   }
 
   if (pending) {
+    // The CTA section heading. The approve action's
+    // approve/scripts/report-comment.js keeps a HAND-DUPLICATED byte-identical
+    // copy of this literal as its CTA_HEADING, which its stripApproveCta matches
+    // to remove the whole CTA on a full approve — it lives in a SEPARATE action
+    // package that cannot cross-require this one — so keep the two byte-identical.
     lines.push("### Approve these changes");
     lines.push("");
     if (reportUrl) {

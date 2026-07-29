@@ -577,8 +577,8 @@ test('TRIGGER_SUBSTRINGS: every value still appears verbatim in examples/tuffgal
 // --- item-level coverage: composed lifecycle + edge cases ----------------- //
 
 test('withStatusBanner: full production lifecycle collapses to one banner, no ticked marker, CTA gone', () => {
-  // Start from a genuine trigger state: a body with BOTH the master and a per-item
-  // box ticked (a human approving everything).
+  // Start from a genuine trigger state: a body with BOTH the approve-all box and a
+  // per-item box ticked (a human approving everything).
   const start = tickedStickyBody();
   assert.strictEqual(hasTickedApproveMarker(start), true);
 
