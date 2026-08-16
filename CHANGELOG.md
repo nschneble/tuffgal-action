@@ -8,6 +8,13 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 _Nothing just yet_
 
+## [v1.7.0] - 2026-08-16
+
+### Added
+
+The sticky PR comment now supports a11y-only changes, e.g. when the baseline
+images are identical but there are structural changes underneath the hood.
+
 ## [v1.6.0] - 2026-07-28
 
 ### Added
@@ -226,7 +233,8 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.7.0...HEAD
+[v1.7.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.7.0
 [v1.6.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.6.0
 [v1.5.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.5.0
 [v1.4.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.4.1

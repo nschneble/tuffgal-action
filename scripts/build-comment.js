@@ -94,8 +94,57 @@ const approveItemCheckbox = (entry, multiBreakpoint) => {
     const bps = distinctBreakpoints(entry.shots);
     if (bps.length) line += ` (${bps.map(escapeHtml).join(", ")})`;
   }
+  // Names WHY an entry with no visible change is sitting in the Changed list.
+  // Free text to the trigger parser, exactly like the breakpoint suffix above.
+  if (isA11yOnlyEntry(entry)) line += " — a11y only";
   return line;
 };
+
+// An entry whose every drifted shot was an accessibility-snapshot drift with
+// matching pixels. Read off the shots the caller built from results.json, where
+// a shot is a11y-only when its action carried `a11yChanged === true` and no
+// `diffPath` (schema/result.ts's positive discriminator — a size-mismatch row
+// also lacks a diffPath but never sets a11yChanged).
+const isA11yOnlyEntry = (entry) => {
+  const shots = (entry && entry.shots) || [];
+  return shots.length > 0 && shots.every((shot) => shot && shot.a11yOnly);
+};
+
+// The rendered diff budget for ONE shot in a comment. tuffgal already clips its
+// payload; this is the tighter comment-side ceiling, since a run can carry many
+// drifted stories and the whole body shares one comment.
+const MAX_A11Y_DIFF_LINES = 20;
+
+// A fenced ```diff block for one shot's a11y drift, or an italic line when the
+// result carried no diff (an older tuffgal, or snapshots too large to diff
+// line-by-line — in which case the recorded counts still name the change).
+//
+// The fence is grown past the longest backtick run in the content, so a snapshot
+// carrying a literal ``` in an accessible name cannot break out of the block.
+function renderA11yDiff(diff) {
+  const all = (diff && diff.lines) || [];
+  if (!all.length) {
+    const size =
+      diff && (diff.added || diff.removed)
+        ? ` (${diff.added} added, ${diff.removed} removed)`
+        : "";
+    return [`_No line diff available${size} — open the report for the full snapshot._`];
+  }
+  const clipped = all.slice(0, MAX_A11Y_DIFF_LINES);
+  const longestRun = clipped.reduce((longest, line) => {
+    const runs = String(line).match(/`+/g) || [];
+    return runs.reduce((max, run) => Math.max(max, run.length), longest);
+  }, 2);
+  const fence = "`".repeat(longestRun + 1);
+  const out = [`${fence}diff`, ...clipped, fence];
+  if (all.length > clipped.length || (diff && diff.truncated)) {
+    out.push("");
+    out.push(
+      `_Diff clipped — ${diff.added} added, ${diff.removed} removed in full._`
+    );
+  }
+  return out;
+}
 
 // Escape text for HTML flow content (story names in a <summary>).
 const escapeHtml = (text) =>
@@ -186,8 +235,13 @@ const ACTIONABLE = {
 //   mismatchKeys  string[] — the changed environment keys, listed under the banner
 //   previewUrl    normalized Pages URL (no trailing slash), or '' when no preview
 //   changed       [{ index, name, shots, actionKeys }] — `shots` is one entry
-//                 per drifted breakpoint: { breakpoint, baseline, actual } with
-//                 image URLs or null. Single-breakpoint/legacy runs carry one
+//                 per drifted breakpoint: { breakpoint, baseline, actual,
+//                 a11yOnly, a11yDiff } with image URLs or null. A shot whose
+//                 pixels matched and whose accessibility tree drifted carries
+//                 `a11yOnly: true` plus results.json's `a11yDiff` payload, and
+//                 renders as a fenced diff instead of thumbnails (an entry whose
+//                 every shot is a11y-only renders that way wholesale, preview or
+//                 not). Single-breakpoint/legacy runs carry one
 //                 shot (breakpoint absent) and render `shots[0]` exactly as
 //                 before; multi-breakpoint runs render one detail row per shot.
 //                 actionKeys is the story's changed candidate-tree keys.
@@ -282,15 +336,44 @@ function buildCommentBody({
     lines.push("");
     for (const entry of changed) {
       lines.push(approveItemCheckbox(entry, multiBreakpoint));
-      if (previewUrl) {
+      // An a11y-only entry has nothing to look at: its baseline and actual PNGs
+      // match. Render the accessibility diff in their place — and render it with
+      // or without a preview, since a fenced diff needs nothing hosted.
+      if (isA11yOnlyEntry(entry)) {
+        lines.push("<details>");
+        lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
+        lines.push("");
+        lines.push("Pixels unchanged. The accessibility snapshot drifted.");
+        lines.push("");
+        for (const shot of entry.shots) {
+          if (multiBreakpoint && shot.breakpoint) {
+            lines.push(`**${escapeHtml(shot.breakpoint)}**`);
+            lines.push("");
+          }
+          for (const line of renderA11yDiff(shot.a11yDiff)) lines.push(line);
+          lines.push("");
+        }
+        if (previewUrl) {
+          lines.push(
+            `[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`
+          );
+        }
+        lines.push("</details>");
+        lines.push("");
+      } else if (previewUrl) {
         lines.push("<details>");
         lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
         lines.push("");
         if (multiBreakpoint) {
           // One row per drifted breakpoint, each labelled with its mode name.
+          // A breakpoint that drifted in the accessibility tree ALONE has no
+          // thumbnails worth a row (its two PNGs match), so it renders as a
+          // diff under the table instead.
+          const pixelShots = (entry.shots || []).filter((s) => !s.a11yOnly);
+          const a11yShots = (entry.shots || []).filter((s) => s.a11yOnly);
           lines.push("| Breakpoint | Baseline | Actual |");
           lines.push("|---|---|---|");
-          for (const shot of entry.shots || []) {
+          for (const shot of pixelShots) {
             lines.push(
               `| ${escapeHtml(
                 shot.breakpoint == null ? "" : shot.breakpoint
@@ -299,6 +382,16 @@ function buildCommentBody({
                 `baseline for ${entry.name}`
               )} | ${thumbnail(shot.actual, `actual for ${entry.name}`)} |`
             );
+          }
+          for (const shot of a11yShots) {
+            lines.push("");
+            lines.push(
+              `**${escapeHtml(
+                shot.breakpoint == null ? "" : shot.breakpoint
+              )}** — pixels unchanged, accessibility snapshot drifted.`
+            );
+            lines.push("");
+            for (const line of renderA11yDiff(shot.a11yDiff)) lines.push(line);
           }
         } else {
           // Single representative shot — byte-identical to the pre-breakpoint

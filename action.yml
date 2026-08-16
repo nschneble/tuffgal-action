@@ -757,10 +757,25 @@ runs:
               // shots[0] only, matching the prior representative-shot pick (the
               // first action at that status). Changed carries baseline + actual;
               // new carries actual only (no prior baseline exists yet).
+              // A changed shot also carries whether it drifted in the
+              // accessibility tree ALONE (pixels matched), plus that run's
+              // rendered `a11yDiff` — the comment shows the diff instead of two
+              // identical thumbnails. The a11y-only test is the positive
+              // `a11yChanged === true` + no `diffPath` pair from the tuffgal
+              // schema; a size-mismatch row also lacks a diffPath but never sets
+              // a11yChanged, so the two never collide. `a11yDiff` is absent on
+              // results from a tuffgal that predates the field; the builder
+              // degrades to naming the drift without the lines.
               const shotsAt = (want, withBaseline) =>
                 actions.filter(a => a.status === want).map(a => (
                   withBaseline
-                    ? { breakpoint: a.breakpoint, baseline: toPreviewUrl(a.baselinePath), actual: toPreviewUrl(a.actualPath) }
+                    ? {
+                        breakpoint: a.breakpoint,
+                        baseline: toPreviewUrl(a.baselinePath),
+                        actual: toPreviewUrl(a.actualPath),
+                        a11yOnly: a.a11yChanged === true && !a.diffPath,
+                        a11yDiff: a.a11yDiff || null,
+                      }
                     : { breakpoint: a.breakpoint, actual: toPreviewUrl(a.actualPath) }
                 ));
               const name = String(s.story || s.file || `story ${index}`).replace(/[\r\n]+/g, ' ');
