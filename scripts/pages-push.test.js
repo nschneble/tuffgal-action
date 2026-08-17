@@ -1,13 +1,17 @@
 'use strict';
 //
-// Unit tests for the pure retryable-vs-terminal push classifier. No deps beyond
-// Node's built-in `node:test` + `node:assert` — run with
-// `node --test scripts/*.test.js`.
+// Unit tests for the Pages step's pure decisions — what the preview may publish
+// and the retryable-vs-terminal push classifier. No deps beyond Node's built-in
+// `node:test` + `node:assert` — run with `node --test scripts/*.test.js`.
 //
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { isRetryablePushError, isExpectedPushFailure } = require('./pages-push.js');
+const {
+  isRetryablePushError,
+  isExpectedPushFailure,
+  isPublishablePreviewEntry,
+} = require('./pages-push.js');
 
 // Real `git push` stderr for a concurrent-PR race: the shared branch tip
 // advanced between our shallow clone and our push, so ours is rejected
@@ -126,4 +130,34 @@ test('empty / nullish input is not an expected push failure', () => {
   assert.strictEqual(isExpectedPushFailure(''), false);
   assert.strictEqual(isExpectedPushFailure(undefined), false);
   assert.strictEqual(isExpectedPushFailure(null), false);
+});
+
+// The preview branch is public, so these two never leave the artifact. `traces`
+// holds Playwright's per-request capture of a failed story; the dev-server log
+// holds the app's stdout.
+test('the report entries carrying app data are not publishable', () => {
+  assert.strictEqual(isPublishablePreviewEntry('traces'), false);
+  assert.strictEqual(isPublishablePreviewEntry('dev-servers.log'), false);
+});
+
+test('everything the report page actually references is publishable', () => {
+  for (const entry of [
+    '',
+    'index.html',
+    'results.json',
+    'assets',
+    'assets/report.css',
+    'assets/report.js',
+    'screenshots',
+    'screenshots/smoke/visit-home.actual.png',
+  ]) {
+    assert.strictEqual(isPublishablePreviewEntry(entry), true, entry);
+  }
+});
+
+// Keyed on the RELATIVE path, so the exclusion binds to the report root only —
+// a consumer story directory that happens to be named `traces` still ships.
+test('the exclusion does not reach a nested entry that shares the name', () => {
+  assert.strictEqual(isPublishablePreviewEntry('screenshots/traces'), true);
+  assert.strictEqual(isPublishablePreviewEntry('assets/dev-servers.log'), true);
 });

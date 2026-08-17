@@ -88,6 +88,15 @@ It needs two things on the consumer repo:
   the first run, so you can turn Pages on right after (or before — an empty
   branch is fine).
 
+> **What the preview makes public.** The preview branch is public and each run
+> commits to it, so everything published stays readable at a stable URL and in
+> that branch's history: the report page, its screenshots of your app, and your
+> committed baselines. Playwright traces (which record every request and
+> response header of a failed story) and the dev-server log are held back — they
+> ship only in the `tuffgal-report` artifact, which follows the run's retention
+> and permissions. If a screenshot of your app in CI would itself be sensitive,
+> set `pages-preview: false`.
+
 > **Why the manual step?** GitHub reserves Pages **site creation** for a
 > repo-admin credential. The `GITHUB_TOKEN` the action runs under can _push_ the
 > branch (with `contents: write`) but cannot _create_ the site, so it can't flip
@@ -114,7 +123,7 @@ contract the CI-owned-baselines model asks of a consumer.
 | `install-browsers`  | `true`                | Run `npx playwright install --with-deps chromium` before the harness                                                                                                                                              |
 | `node-version`      | `22`                  | Node.js version (Tuffgal requires Node 22+)                                                                                                                                                                       |
 | `pages-branch`      | `gh-pages`            | Branch the per-PR preview is published to (only used when `pages-preview` is on)                                                                                                                                  |
-| `pages-preview`     | `true`                | Publish the report + baselines to a per-PR GitHub Pages preview so the comment can deep-link to changed stories. Needs `contents: write` + Pages enabled; PUBLIC repos only; degrades to artifact links otherwise |
+| `pages-preview`     | `true`                | Publish the report + baselines to a per-PR GitHub Pages preview so the comment can deep-link to changed stories. Needs `contents: write` + Pages enabled; PUBLIC repos only, so what it publishes is world-readable (traces + the dev-server log are held back); degrades to artifact links otherwise |
 | `pages-token`       | `${{ github.token }}` | Token to push the preview branch and auto-enable Pages. The default `GITHUB_TOKEN` pushes but can't create the Pages site (enable Pages once by hand); pass an admin PAT / App token to auto-enable it            |
 | `report-path`       | `tuffgal/report`      | Path to the report directory, relative to `working-directory` (must match `paths.report` in `tuffgal.config.ts`)                                                                                                  |
 | `retention-days`    | `14`                  | Artifact retention (days)                                                                                                                                                                                         |

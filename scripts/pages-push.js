@@ -1,7 +1,8 @@
 'use strict';
 //
-// Is a failed `git push` to the shared preview branch worth retrying? Only the
-// verdict lives here; the git side effects stay inline.
+// The Pages-preview step's pure decisions: what of the report tree may be
+// published, and whether a failed `git push` is worth retrying. Side effects
+// (the copy, the git commands) stay inline.
 //
 // Two runs on DIFFERENT PRs can overlap on the branch. Their `pr-<n>/` subtrees
 // are disjoint, so a non-fast-forward rejection is RETRYABLE — re-fetch the
@@ -9,6 +10,17 @@
 // protected-branch failure never succeeds on retry, so it is TERMINAL, as is
 // anything unrecognized: fall to the artifact-link fallback rather than loop on an
 // error we can't reason about.
+
+// The preview branch is public: a trace carries the app's request and response
+// headers, the dev-server log its stdout. Neither is referenced by the report.
+const PREVIEW_EXCLUDED = new Set(['traces', 'dev-servers.log']);
+
+// Keyed on the path RELATIVE to the report root, so the match binds to those two
+// root entries — a nested dir sharing the name still ships, and the root itself
+// relativizes to '' and is never excluded, so the copy always starts.
+function isPublishablePreviewEntry(relativePath) {
+  return !PREVIEW_EXCLUDED.has(relativePath);
+}
 
 // Signals that a push failed for a reason no retry can fix. Checked FIRST, so a
 // server-side decline that also prints a generic "failed to push some refs"
@@ -57,4 +69,8 @@ function isExpectedPushFailure(output) {
   return TERMINAL.some((pattern) => pattern.test(text));
 }
 
-module.exports = { isRetryablePushError, isExpectedPushFailure };
+module.exports = {
+  isPublishablePreviewEntry,
+  isRetryablePushError,
+  isExpectedPushFailure,
+};

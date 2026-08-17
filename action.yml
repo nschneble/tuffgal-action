@@ -42,7 +42,10 @@ inputs:
       download. Requires Pages enabled on the repo and `contents: write` on the
       job. Degrades gracefully: if publish or URL resolution fails, the comment
       falls back to the artifact-download links. PUBLIC repos only (private
-      Pages is Enterprise-only). Set to false to skip.
+      Pages is Enterprise-only), so ANYONE can read what it publishes: the
+      report's screenshots of your app, and your committed baselines. Playwright
+      traces and the dev-server log are held back for that reason — they stay in
+      the `tuffgal-report` artifact. Set to false to skip.
     required: false
     default: "true"
   pages-token:
@@ -497,10 +500,13 @@ runs:
           // `../baselines/…` image srcs resolve on Pages as they do locally. The
           // op is idempotent, so re-applying it onto a freshly re-synced tip is
           // safe on a retry.
-          const applySubtree = () => {
+          const applySubtree = (isPublishable) => {
             fs.rmSync(prDir, { recursive: true, force: true });
             fs.mkdirSync(path.join(prDir, 'report'), { recursive: true });
-            fs.cpSync(reportAbs, path.join(prDir, 'report'), { recursive: true });
+            fs.cpSync(reportAbs, path.join(prDir, 'report'), {
+              recursive: true,
+              filter: (src) => isPublishable(path.relative(reportAbs, src)),
+            });
             if (fs.existsSync(baselinesAbs)) {
               fs.cpSync(baselinesAbs, path.join(prDir, 'baselines'), { recursive: true });
             }
@@ -539,11 +545,11 @@ runs:
             // CI job); only the git side effects stay inline here. Required INSIDE
             // this never-fail block so even a module-load failure degrades to the
             // artifact-link fallback rather than failing the step.
-            const { isRetryablePushError, isExpectedPushFailure } = require(`${process.env.ACTION_PATH}/scripts/pages-push.js`);
+            const { isRetryablePushError, isExpectedPushFailure, isPublishablePreviewEntry } = require(`${process.env.ACTION_PATH}/scripts/pages-push.js`);
             const maxAttempts = 3;
             for (let attempt = 1; ; attempt++) {
               syncClone();
-              applySubtree();
+              applySubtree(isPublishablePreviewEntry);
               try {
                 run('git', ['-C', work, 'push', '-q', 'origin', `HEAD:refs/heads/${branch}`]);
                 break;
