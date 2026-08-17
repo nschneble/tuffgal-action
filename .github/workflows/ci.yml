@@ -74,6 +74,20 @@ jobs:
           # would normalize it away.
           craft "$work/evil-backslash.zip" 'visit-home\payload.png'
 
+          # A directory entry carries no extension, so only the path rules can catch it.
+          craft_dir() {
+            python3 - "$1" "$2" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1], 'w') as z:
+              z.writestr(sys.argv[2], b'')
+              z.writestr('visit-home/0.png', b'x')
+          PY
+          }
+
+          craft_dir "$work/evil-dir-traversal.zip" '../../escape/'
+          craft_dir "$work/evil-dir-absolute.zip"  '/etc/evil/'
+          craft_dir "$work/evil-dir-backslash.zip" 'visit-home\sub/'
+
           # A symlink entry carries an allowed extension but is not a regular
           # file. The mode is stamped into the entry's external_attr high bits
           # (0o120777 = symlink) and the link target is the entry data — this is
@@ -98,7 +112,9 @@ jobs:
           printf 'not a zip at all' > "$work/evil-garbage.zip"
           head -c 32 "$work/ok.zip" > "$work/evil-truncated.zip"
 
-          for bad in evil-type evil-traversal evil-absolute evil-backslash evil-symlink evil-garbage evil-truncated; do
+          for bad in evil-type evil-traversal evil-absolute evil-backslash \
+                     evil-dir-traversal evil-dir-absolute evil-dir-backslash \
+                     evil-symlink evil-garbage evil-truncated; do
             if bash "$validator" "$work/$bad.zip"; then
               echo "FAIL: $bad.zip was accepted but should be rejected" >&2; exit 1
             fi

@@ -64,18 +64,19 @@ done < <(awk '
   }
 ' "$listing")
 
-# Pass 2 — name-based checks. These read exact entry names from `zipinfo -1`
-# (no column parsing, so names with spaces or other oddities are byte-faithful)
-# and enforce relative-path + traversal + backslash + allowed-extension rules.
+# Pass 2 — name-based checks, read from `zipinfo -1` (no column parsing, so
+# names with spaces stay byte-faithful). The path rules run on EVERY entry; only
+# the extension rule skips directories. Skip a directory outright and a
+# `../../escape/` entry never reaches an arm that would catch it.
 while IFS= read -r entry; do
   [ -z "$entry" ] && continue
-  case "$entry" in
-    */) continue ;;                       # directory entry, structural
-  esac
   case "$entry" in
     /*)   echo "Rejected absolute path in artifact: $entry" >&2; bad=1 ;;
     *..*) echo "Rejected path traversal in artifact: $entry" >&2; bad=1 ;;
     *\\*) echo "Rejected backslash in artifact path: $entry" >&2; bad=1 ;;
+  esac
+  case "$entry" in
+    */) continue ;;                       # directory entry: no extension to check
   esac
   case "$entry" in
     *.png|*.yaml|*.yml|*.json) : ;;
