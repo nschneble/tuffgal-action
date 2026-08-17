@@ -4,7 +4,11 @@
 // edits. As an approval runs (permission gate -> candidate fetch -> commit), the
 // bot rewrites the SAME `<!-- tuffgal-report -->` sticky comment through
 // in-flight -> milestone -> final banners so a maintainer watching the PR sees
-// progress instead of a frozen comment. Extracted out of the inline
+// progress instead of a frozen comment. For the duration it also LOCKS every
+// approve box (see lockApproveBoxes) so nothing in the comment can start a second
+// approval against a branch this run is already committing to, and stamps the
+// running job's id into the banner so a trigger that lands mid-run can refuse
+// itself (inFlightRunId) and say so (withQueuedNote). Extracted out of the inline
 // `actions/github-script` blocks in approve/action.yml so the loop-safety-critical
 // body transforms are exercised by a `node --test` suite — the same
 // extract-and-unit-test precedent set by the sibling resolve-approver.js /
@@ -35,6 +39,63 @@ const REPORT_MARKER = '<!-- tuffgal-report -->';
 // regex below can never mismatch one for the other.
 const STATUS_OPEN = '<!-- tuffgal-approve-status -->';
 const STATUS_CLOSE = '<!-- /tuffgal-approve-status -->';
+
+// Rendered as the first line INSIDE the status block by the two in-flight phases
+// (in-flight, milestone) and by NEITHER terminal banner. Its presence in a body
+// is the "an approval is running right now" signal a second trigger reads to
+// refuse itself, so it lives and dies with the phase banner that carries it: the
+// terminal write replaces the whole block, taking the marker with it.
+//
+// It carries the OWNING run's id, digits only. A cancelled job runs no terminal
+// step, so without the id a killed run would leave a lock nothing could clear and
+// every later approval would refuse itself forever. With it, the refusing job
+// asks the API whether that run is still going and takes the lock when it is not.
+const IN_FLIGHT_MARKER_PREFIX = '<!-- tuffgal-approve-inflight:';
+const IN_FLIGHT_MARKER_RE = /<!--\s*tuffgal-approve-inflight:(\d+)\s*-->/;
+
+const inFlightMarker = (runId) => `${IN_FLIGHT_MARKER_PREFIX}${String(runId).replace(/\D/g, '')} -->`;
+
+// The id of the run currently holding the lock, or `null` when the body carries
+// no in-flight marker. Callers treat a non-null id as "locked, unless that run has
+// since finished".
+function inFlightRunId(body) {
+  const match = asString(body).match(IN_FLIGHT_MARKER_RE);
+  return match ? match[1] : null;
+}
+
+// Delimiters for the queued-request note — a block of its OWN, written directly
+// after the status block. Deliberately not part of the status block: the running
+// job rewrites that block at each phase, which would wipe a note the running job
+// never knew was added. This block is written by the REFUSED job and cleared by
+// the running job when it reaches a terminal state.
+const QUEUED_OPEN = '<!-- tuffgal-approve-queued -->';
+const QUEUED_CLOSE = '<!-- /tuffgal-approve-queued -->';
+
+// The inert stand-in for a checkbox while an approval is in flight. GitHub renders
+// a task-list checkbox for `- [ ]` only; with the brackets gone the line is plain
+// text, so there is nothing to click and no way to fire a second approval from a
+// comment that is mid-run. The marker comment is left untouched, so the swap is
+// reversible line-for-line (see unlockApproveBoxes) with no stashed state.
+const LOCK_GLYPH = '⏳';
+
+// Appended to the TOP-LEVEL box's line (only) while locked, so the inert control
+// says why it is inert. Stripped byte-for-byte on unlock, which is why it is a
+// literal rather than composed prose.
+const LOCKED_BOX_SUFFIX = ' ⏳ Locked while an approval runs.';
+
+// Approve boxes in ANY tick state (`[ ]`, `[x]`, `[X]`) — the lock's read side,
+// which must catch a box the caller has not unticked yet. Group 1 is the leading
+// `- `, group 2 the marker comment; the tick state between them is what the swap
+// replaces. Non-global (a global regex is stateful under `.test`), applied per
+// line, where at most one box can appear.
+const ANY_APPROVE_ALL_BOX = /(-\s*)\[[ xX]\](\s*<!--\s*tuffgal-approve-box\s*-->)/;
+const ANY_APPROVE_ITEM_BOX = /(-\s*)\[[ xX]\](\s*<!--\s*tuffgal-approve-item:[a-z0-9,-]*\s*-->)/;
+
+// The same two lines in their LOCKED form — the unlock read side.
+const LOCKED_APPROVE_ALL_BOX = new RegExp(`(-\\s*)${LOCK_GLYPH}(\\s*<!--\\s*tuffgal-approve-box\\s*-->)`);
+const LOCKED_APPROVE_ITEM_BOX = new RegExp(
+  `(-\\s*)${LOCK_GLYPH}(\\s*<!--\\s*tuffgal-approve-item:[a-z0-9,-]*\\s*-->)`
+);
 
 // The `### Approve these changes` CTA section heading. HAND-DUPLICATED,
 // byte-for-byte, from `scripts/build-comment.js`'s buildCommentBody, which
@@ -130,6 +191,105 @@ function hasTickedApproveMarker(body) {
   return TRIGGER_SUBSTRINGS.some((substring) => text.includes(substring));
 }
 
+// Swap every approve box — top-level and per-item, in any tick state — for its
+// inert LOCKED form, so a comment mid-approval offers nothing to click. Called on
+// the way IN to each in-flight phase write; `unlockApproveBoxes` reverses it at
+// every terminal state. Idempotent: an already-locked line has no `[…]` left to
+// match, so the suffix is never appended twice.
+//
+// LOOP SAFETY. The locked form carries no checkbox syntax at all, so it satisfies
+// `hasTickedApproveMarker` trivially and can never fire the consumer workflow's
+// prefilter. Locking a still-TICKED box is therefore also a valid untick — but
+// callers still untick first, so the two transforms stay independently correct.
+function lockApproveBoxes(body) {
+  return asString(body)
+    .split('\n')
+    .map((line) => {
+      if (ANY_APPROVE_ITEM_BOX.test(line)) {
+        return line.replace(ANY_APPROVE_ITEM_BOX, `$1${LOCK_GLYPH}$2`);
+      }
+      if (ANY_APPROVE_ALL_BOX.test(line)) {
+        return line.replace(ANY_APPROVE_ALL_BOX, `$1${LOCK_GLYPH}$2`) + LOCKED_BOX_SUFFIX;
+      }
+      return line;
+    })
+    .join('\n');
+}
+
+// Restore every LOCKED approve box to its untickable `[ ]` form, dropping the
+// top-level box's locked suffix. The inverse of lockApproveBoxes, and idempotent
+// the same way. Every terminal path (success, already-up-to-date, failure) runs
+// this so the comment is interactive again the moment nothing is in flight.
+function unlockApproveBoxes(body) {
+  return asString(body)
+    .split('\n')
+    .map((line) => {
+      if (LOCKED_APPROVE_ITEM_BOX.test(line)) {
+        return line.replace(LOCKED_APPROVE_ITEM_BOX, '$1[ ]$2');
+      }
+      if (LOCKED_APPROVE_ALL_BOX.test(line)) {
+        const restored = line.replace(LOCKED_APPROVE_ALL_BOX, '$1[ ]$2');
+        return restored.endsWith(LOCKED_BOX_SUFFIX)
+          ? restored.slice(0, -LOCKED_BOX_SUFFIX.length)
+          : restored;
+      }
+      return line;
+    })
+    .join('\n');
+}
+
+// Insert or replace a delimited block, anchored after `anchor` on first insert.
+// Shared by the status banner and the queued-request note, which differ only in
+// their delimiters and where they first land.
+function withBlock(body, open, close, lines, anchor) {
+  const text = asString(body);
+  const content = (Array.isArray(lines) ? lines : [lines]).map(asString);
+  const block = [open, ...content, close].join('\n');
+
+  // Replace an existing block in place. A function replacer keeps `block`
+  // literal (no `$`-pattern interpretation).
+  if (text.includes(open) && text.includes(close)) {
+    const region = new RegExp(escapeRegExp(open) + '[\\s\\S]*?' + escapeRegExp(close));
+    return text.replace(region, () => block);
+  }
+
+  // First insertion: drop the block right after the anchor line, blank-line
+  // padded so the surrounding markdown still renders.
+  const bodyLines = text.split('\n');
+  const anchorIndex = bodyLines.findIndex((line) => line.includes(anchor));
+  if (anchorIndex === -1) {
+    // Defensive: the caller only ever passes a real report body, but never
+    // silently drop the block if the anchor is somehow absent.
+    return [block, '', text].join('\n');
+  }
+  bodyLines.splice(anchorIndex + 1, 0, '', block, '');
+  return bodyLines.join('\n');
+}
+
+// Remove a delimited block and the blank line padding the insert added.
+function withoutBlock(body, open, close) {
+  const text = asString(body);
+  if (!text.includes(open) || !text.includes(close)) {
+    return text;
+  }
+  const region = new RegExp('\\n*' + escapeRegExp(open) + '[\\s\\S]*?' + escapeRegExp(close) + '\\n*');
+  return text.replace(region, '\n\n');
+}
+
+// Note that a further approval was requested while this one was running, written
+// as its own block directly under the status banner (see QUEUED_OPEN). Written by
+// the REFUSED job; the running job clears it via `clearQueuedNote` when it
+// finishes, so the note never outlives the run it was queued behind. Repeated
+// refusals replace the note rather than stacking.
+function withQueuedNote(body, lines) {
+  const anchor = asString(body).includes(STATUS_CLOSE) ? STATUS_CLOSE : REPORT_MARKER;
+  return withBlock(body, QUEUED_OPEN, QUEUED_CLOSE, lines, anchor);
+}
+
+function clearQueuedNote(body) {
+  return withoutBlock(body, QUEUED_OPEN, QUEUED_CLOSE);
+}
+
 // Insert (or, on a repeated call within one approve run, REPLACE) a status banner
 // block delimited by STATUS_OPEN / STATUS_CLOSE, immediately after the
 // REPORT_MARKER line so it is the first visible content. `lines` is an array of
@@ -138,28 +298,7 @@ function hasTickedApproveMarker(body) {
 // content between them is swapped in place — never duplicated — and the banner
 // stays anchored where the first insert placed it (right after the marker).
 function withStatusBanner(body, lines) {
-  const text = asString(body);
-  const content = (Array.isArray(lines) ? lines : [lines]).map(asString);
-  const block = [STATUS_OPEN, ...content, STATUS_CLOSE].join('\n');
-
-  // Replace an existing banner in place. A function replacer keeps `block`
-  // literal (no `$`-pattern interpretation).
-  if (text.includes(STATUS_OPEN) && text.includes(STATUS_CLOSE)) {
-    const region = new RegExp(escapeRegExp(STATUS_OPEN) + '[\\s\\S]*?' + escapeRegExp(STATUS_CLOSE));
-    return text.replace(region, () => block);
-  }
-
-  // First insertion: drop the block right after the marker line, blank-line
-  // padded so the surrounding markdown still renders.
-  const bodyLines = text.split('\n');
-  const markerIndex = bodyLines.findIndex((line) => line.includes(REPORT_MARKER));
-  if (markerIndex === -1) {
-    // Defensive: the caller only ever passes a real report body, but never
-    // silently drop the banner if the marker is somehow absent.
-    return [block, '', text].join('\n');
-  }
-  bodyLines.splice(markerIndex + 1, 0, '', block, '');
-  return bodyLines.join('\n');
+  return withBlock(body, STATUS_OPEN, STATUS_CLOSE, lines, REPORT_MARKER);
 }
 
 // Strip the entire `### Approve these changes` CTA section — the heading, the
@@ -246,9 +385,17 @@ module.exports = {
   REPORT_MARKER,
   STATUS_OPEN,
   STATUS_CLOSE,
+  QUEUED_OPEN,
+  QUEUED_CLOSE,
   TRIGGER_SUBSTRINGS,
   untickApproveBoxes,
   hasTickedApproveMarker,
+  lockApproveBoxes,
+  unlockApproveBoxes,
+  inFlightMarker,
+  inFlightRunId,
+  withQueuedNote,
+  clearQueuedNote,
   withStatusBanner,
   stripApproveCta,
   applyPartialApproval,

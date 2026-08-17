@@ -824,6 +824,26 @@ jobs:
             fi
           done
           echo "approve-example-trigger-source-lock: master + per-story approve boxes both locked in the trigger condition."
+      - name: Example approve workflow serializes per PR (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          example="examples/tuffgal-approve.yml"
+          # The per-PR concurrency group is what actually keeps two approvals off
+          # the same branch; the action's in-comment lock is the user-visible half
+          # and is racy on its own. cancel-in-progress MUST stay false: a run
+          # killed between the baseline commit and its final comment update leaves
+          # the sticky comment stranded on a progress banner.
+          # shellcheck disable=SC2016
+          if ! grep -Fq 'group: tuffgal-approve-${{ github.event.issue.number }}' "$example"; then
+            echo "$example must serialize approvals with a per-PR concurrency group." >&2
+            exit 1
+          fi
+          if ! grep -Fq 'cancel-in-progress: false' "$example"; then
+            echo "$example must not cancel an approval in progress — a killed run strands the sticky comment mid-banner." >&2
+            exit 1
+          fi
+          echo "approve-example-trigger-source-lock: per-PR concurrency group locked, cancel-in-progress pinned false."
 
   # Unit test for the parse step's no-results guard. A results.json that is
   # missing OR malformed (empty, whitespace, truncated, not a JSON object) must

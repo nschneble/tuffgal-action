@@ -156,6 +156,10 @@ runs:
           core.setOutput('proceed', 'true');
           core.setOutput('pr_number', String(issue.number));
           core.setOutput('comment_id', String(comment.id));
+          // The resolved approver (comment author on a mention, editor on a
+          // checkbox tick). Named in the busy note when a second request is
+          // refused mid-flight.
+          core.setOutput('actor', actor);
           core.setOutput('head_ref', pr.data.head.ref);
           core.setOutput('head_sha', pr.data.head.sha);
           // JSON-encode the approve selection ('all' for a mention / master box,
@@ -187,6 +191,7 @@ runs:
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
+        APPROVER: ${{ steps.gate.outputs.actor }}
         # This composite's own action dir (see the commit step's ACTION_PATH note).
         # The script requires report-comment.js from here.
         ACTION_PATH: ${{ github.action_path }}
@@ -194,15 +199,19 @@ runs:
         # DEFAULT token — see the loop-safety note above. Never inputs.token here.
         github-token: ${{ github.token }}
         script: |
-          const { REPORT_MARKER, untickApproveBoxes, withStatusBanner, hasTickedApproveMarker } =
-            require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
+          const {
+            REPORT_MARKER, inFlightMarker, inFlightRunId, untickApproveBoxes,
+            lockApproveBoxes, withQueuedNote, withStatusBanner, hasTickedApproveMarker,
+          } = require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
           const { owner, repo } = context.repo;
           const prNumber = Number(process.env.PR_NUMBER);
           const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
 
           // Default to "no sticky comment to edit" so every later report step
-          // no-ops safely if the search fails or finds nothing.
+          // no-ops safely if the search fails or finds nothing, and to "not busy"
+          // so a failed lookup never strands the approval on the refusal path.
           core.setOutput('comment_id', '');
+          core.setOutput('busy', 'false');
           try {
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number: prNumber, per_page: 100,
@@ -212,12 +221,63 @@ runs:
               core.info('No tuffgal-report sticky comment found; skipping status edits.');
               return;
             }
+
+            // Another approval is mid-flight against this same PR. Refuse rather
+            // than race it to the same branch: note the ignored request under the
+            // running job's banner (its own block, so that job's next phase write
+            // does not wipe it) and skip every step below via the `busy` output.
+            // The running job clears the note when it reaches a terminal state.
+            // The consumer workflow's per-PR concurrency group is the real
+            // serializer (see examples/tuffgal-approve.yml); this is the
+            // user-visible half, and the backstop when a request slips through the
+            // window between two runs' comment reads.
+            // A run id in the marker that belongs to a run which has since
+            // completed (or that the API cannot find) is a STALE lock — a
+            // cancelled job never reaches its terminal step, and nothing else
+            // would ever clear it. Take the lock in that case instead of
+            // refusing every approval on this PR forever.
+            const lockedBy = inFlightRunId(sticky.body);
+            let lockIsLive = lockedBy !== null && lockedBy !== String(context.runId);
+            if (lockIsLive) {
+              try {
+                const other = await github.rest.actions.getWorkflowRun({
+                  owner, repo, run_id: Number(lockedBy),
+                });
+                lockIsLive = other.data.status !== 'completed';
+              } catch (error) {
+                core.info(`Could not read run ${lockedBy} holding the approve lock (${error.message}); treating it as stale.`);
+                lockIsLive = false;
+              }
+            }
+            if (lockIsLive) {
+              core.setOutput('busy', 'true');
+              const requester = process.env.APPROVER;
+              const note = [
+                `> ⏳ **Another approval is already running** — this request${requester ? ` from @${requester}` : ''} was ignored. Re-tick a box or comment \`@tuffgal approve\` once the run above finishes.`,
+              ];
+              // Untick + lock even here: the box this request ticked is still
+              // ticked in the body we just read (the other job locked its own
+              // snapshot), and a written-back ticked marker would retrigger.
+              const busyBody = withQueuedNote(lockApproveBoxes(untickApproveBoxes(sticky.body)), note);
+              if (hasTickedApproveMarker(busyBody)) {
+                core.warning('Refusing to write the busy note: outgoing body still carries a ticked approve marker.');
+                return;
+              }
+              await github.rest.issues.updateComment({ owner, repo, comment_id: sticky.id, body: busyBody });
+              core.warning('An approval is already in flight for this PR; ignoring this request.');
+              return;
+            }
+
             const banner = [
+              inFlightMarker(context.runId),
               `> ⚙️ **Approving baselines** — fetching the approved candidates and committing them to this branch. This can take a few minutes.`,
               `>`,
               `> [View the run →](${runUrl})`,
             ];
-            const newBody = withStatusBanner(untickApproveBoxes(sticky.body), banner);
+            // Lock every approve box for the duration: an unticked box is still
+            // clickable, and a click mid-run would fire a second approval against
+            // a branch this job is already committing to.
+            const newBody = withStatusBanner(lockApproveBoxes(untickApproveBoxes(sticky.body)), banner);
             // Loop-safety assertion: never write a body that still carries a
             // ticked approve marker (would risk retriggering the approve workflow).
             if (hasTickedApproveMarker(newBody)) {
@@ -237,14 +297,14 @@ runs:
     #    data-only source for its current baselines.                      #
     # ------------------------------------------------------------------ #
     - name: Checkout default branch (trusted)
-      if: steps.gate.outputs.proceed == 'true'
+      if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true'
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ github.event.repository.default_branch }}
         fetch-depth: 1
 
     - name: Set up Node.js
-      if: steps.gate.outputs.proceed == 'true'
+      if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true'
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: ${{ inputs.node-version }}
@@ -252,7 +312,7 @@ runs:
         cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
 
     - name: Install dependencies (trusted base deps)
-      if: steps.gate.outputs.proceed == 'true'
+      if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: npm ci
@@ -264,7 +324,7 @@ runs:
     # ------------------------------------------------------------------ #
     - name: Download candidates artifact
       id: download
-      if: steps.gate.outputs.proceed == 'true'
+      if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true'
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
@@ -340,7 +400,7 @@ runs:
           core.setOutput('dir', dir);
 
     - name: No candidates found
-      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found != 'true'
+      if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found != 'true'
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
@@ -359,7 +419,7 @@ runs:
     # ------------------------------------------------------------------ #
     - name: Validate + extract candidates
       id: extract
-      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
+      if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true'
       shell: bash
       env:
         ZIP_PATH: ${{ steps.download.outputs.zip_path }}
@@ -402,7 +462,7 @@ runs:
     # ------------------------------------------------------------------ #
     - name: Filter candidates to selection
       id: filter
-      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
+      if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true'
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         CAND_DIR: ${{ steps.extract.outputs.cand_dir }}
@@ -516,7 +576,7 @@ runs:
         # DEFAULT token — GITHUB_TOKEN comment edits never fire workflow events.
         github-token: ${{ github.token }}
         script: |
-          const { untickApproveBoxes, withStatusBanner, hasTickedApproveMarker } =
+          const { inFlightMarker, untickApproveBoxes, lockApproveBoxes, withStatusBanner, hasTickedApproveMarker } =
             require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
           const { owner, repo } = context.repo;
           const commentId = Number(process.env.COMMENT_ID);
@@ -526,11 +586,15 @@ runs:
             // Re-fetch fresh — never reuse the in-flight body from step 1b.
             const current = await github.rest.issues.getComment({ owner, repo, comment_id: commentId });
             const banner = [
+              inFlightMarker(context.runId),
               `> 📦 **Candidates fetched** — committing the approved baselines…`,
               `>`,
               `> [View the run →](${runUrl})`,
             ];
-            const newBody = withStatusBanner(untickApproveBoxes(current.data.body || ''), banner);
+            // Re-lock (idempotent): the boxes were locked in step 1b, but a body
+            // refreshed by the visual workflow in between could have arrived with
+            // clickable boxes again.
+            const newBody = withStatusBanner(lockApproveBoxes(untickApproveBoxes(current.data.body || '')), banner);
             if (hasTickedApproveMarker(newBody)) {
               core.warning('Refusing to write milestone status: outgoing body still carries a ticked approve marker.');
               return;
@@ -552,7 +616,7 @@ runs:
     #    friendlier "No candidates found" path, not this.                 #
     # ------------------------------------------------------------------ #
     - name: Preflight tuffgal supports approve --from
-      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
+      if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true'
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         WORKDIR: ${{ inputs.working-directory }}
@@ -606,7 +670,7 @@ runs:
     #    owns the tree copy, prune, and manifest write.                   #
     # ------------------------------------------------------------------ #
     - name: Apply candidates via tuffgal approve
-      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
+      if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -679,7 +743,7 @@ runs:
     # ------------------------------------------------------------------ #
     - name: Commit baselines to PR head branch
       id: commit
-      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true'
+      if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true'
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         WORKDIR: ${{ inputs.working-directory }}
@@ -1048,8 +1112,10 @@ runs:
         # DEFAULT token — GITHUB_TOKEN comment edits never fire workflow events.
         github-token: ${{ github.token }}
         script: |
-          const { untickApproveBoxes, withStatusBanner, stripApproveCta, applyPartialApproval, hasTickedApproveMarker } =
-            require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
+          const {
+            untickApproveBoxes, unlockApproveBoxes, clearQueuedNote, withStatusBanner,
+            stripApproveCta, applyPartialApproval, hasTickedApproveMarker,
+          } = require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
           const { owner, repo } = context.repo;
           const commentId = Number(process.env.COMMENT_ID);
           const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
@@ -1062,7 +1128,10 @@ runs:
 
           try {
             const current = await github.rest.issues.getComment({ owner, repo, comment_id: commentId });
-            let body = untickApproveBoxes(current.data.body || '');
+            // Nothing is in flight any more: restore the clickable boxes (whatever
+            // survives the CTA edits below) and drop any note about a request that
+            // was refused while this run held the lock.
+            let body = clearQueuedNote(untickApproveBoxes(unlockApproveBoxes(current.data.body || '')));
             const isPartial = process.env.IS_PARTIAL === 'true';
 
             // Partial approve: convert the just-approved per-item boxes to
@@ -1159,9 +1228,10 @@ runs:
     #    empty, so this fires exactly in the not-yet-reported cases. Never   #
     #    double-posts over a success (report_final set `reported=true`).     #
     #                                                                     #
-    #    Step 1b already unticked everything, so the boxes are already      #
-    #    re-tickable; this untick is defense in depth. Same DEFAULT-token   #
-    #    + assert + try/catch discipline.                                   #
+    #    Step 1b LOCKED every box for the duration, so this path unlocks     #
+    #    them — the retry the banner offers has to be clickable — and clears  #
+    #    any queued-request note. The untick alongside it is defense in       #
+    #    depth. Same DEFAULT-token + assert + try/catch discipline.           #
     # ------------------------------------------------------------------ #
     - name: Report approval failure on the sticky report comment
       id: report_failure
@@ -1176,7 +1246,7 @@ runs:
         # DEFAULT token — GITHUB_TOKEN comment edits never fire workflow events.
         github-token: ${{ github.token }}
         script: |
-          const { untickApproveBoxes, withStatusBanner, hasTickedApproveMarker } =
+          const { untickApproveBoxes, unlockApproveBoxes, clearQueuedNote, withStatusBanner, hasTickedApproveMarker } =
             require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
           const { owner, repo } = context.repo;
           const commentId = Number(process.env.COMMENT_ID);
@@ -1187,7 +1257,13 @@ runs:
             const banner = [
               `> ⚠️ **Approval didn't complete** — [check the run](${runUrl}) for details. Re-tick a box or comment \`@tuffgal approve\` to retry.`,
             ];
-            const newBody = withStatusBanner(untickApproveBoxes(current.data.body || ''), banner);
+            // The retry the banner offers has to be clickable, so this terminal
+            // path unlocks too — and drops the in-flight marker with the banner it
+            // replaces, releasing the lock a refused request reads.
+            const newBody = withStatusBanner(
+              clearQueuedNote(untickApproveBoxes(unlockApproveBoxes(current.data.body || ''))),
+              banner
+            );
             if (hasTickedApproveMarker(newBody)) {
               core.warning('Refusing to write failure status: outgoing body still carries a ticked approve marker.');
               return;

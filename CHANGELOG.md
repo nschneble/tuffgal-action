@@ -15,6 +15,13 @@ _Nothing just yet_
 The sticky PR comment now supports a11y-only changes, e.g. when the baseline
 images are identical but there are structural changes underneath the hood.
 
+### Changed
+
+- Approve checkboxes are locked while an approval runs, so nothing in the
+  sticky PR comment can trigger a second approval
+- A `@tuffgal approve` that lands mid-approval is refused with a note under
+  the status banner, cleared when the running approval finishes
+
 ## [v1.6.0] - 2026-07-28
 
 ### Added

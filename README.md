@@ -221,8 +221,21 @@ the bot edits that same comment in place as the run progresses:
   the check re-runs against the new baselines (and, on a full approval,
   short-circuits to a fast pass).
 - **⚠️ Failure** — if approval doesn't complete, the banner says so and invites a
-  retry. The approve boxes are already re-tickable (they're unticked the instant
-  approval starts).
+  retry, with every approve box unlocked and re-tickable again.
+
+While an approval is in flight, the comment offers nothing to click: each approve
+box is swapped for an inert **⏳** line (its hidden marker kept, so the swap is
+reversed at the end), and the top-level box says _Locked while an approval runs_.
+A `@tuffgal approve` typed during that window is refused with a note under the
+banner naming the ignored request, and the running approval clears that note when
+it finishes. The lock is stamped with the running job's id, so an approval that is
+cancelled mid-run never leaves the boxes stuck: the next request sees the owning
+run is no longer active and takes over.
+
+The real serializer is the per-PR `concurrency` group in the example approve
+workflow (`cancel-in-progress: false`), which queues a second request behind the
+one in flight rather than racing it to the same branch. Keep it if you copy that
+workflow.
 
 This live banner is **in addition to** the bot's existing approve feedback, not a
 replacement: the separate `<!-- tuffgal-approve -->` reply comment and the 👀 / 🚀

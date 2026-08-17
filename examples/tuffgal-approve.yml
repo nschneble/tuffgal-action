@@ -36,6 +36,15 @@ jobs:
           contains(github.event.comment.body, '[X] <!-- tuffgal-approve-item:')))
       )
     runs-on: ubuntu-latest
+    # Serialize approvals per PR. A second trigger — another maintainer's tick, or
+    # a `@tuffgal approve` typed while one is running — queues behind the approval
+    # in flight instead of racing it to the same branch. Never cancel in progress:
+    # a run killed between the baseline commit and its final comment update would
+    # leave the sticky comment stranded on a progress banner. The action also locks
+    # its own checkboxes while running, but this group is the real serializer.
+    concurrency:
+      group: tuffgal-approve-${{ github.event.issue.number }}
+      cancel-in-progress: false
     permissions:
       contents: write # commit baselines to the PR head branch
       pull-requests: write # react + reply on the comment

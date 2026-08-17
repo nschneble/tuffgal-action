@@ -649,3 +649,169 @@ test('withStatusBanner: a body with NO REPORT_MARKER still gets a sane banner (m
   assert.match(out, /just some text/);
   assert.strictEqual(bannerBlockCount(out), 1);
 });
+
+// --- lock / unlock while an approval is in flight -------------------------- //
+
+const {
+  QUEUED_OPEN,
+  QUEUED_CLOSE,
+  lockApproveBoxes,
+  unlockApproveBoxes,
+  inFlightMarker,
+  inFlightRunId,
+  withQueuedNote,
+  clearQueuedNote,
+} = require('./report-comment.js');
+
+test('lockApproveBoxes: swaps every box for the inert glyph, keeping the marker', () => {
+  const body = [
+    '- [ ] <!-- tuffgal-approve-item:visit-home --> Approve **Home hero**',
+    '- [ ] <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit.',
+  ].join('\n');
+  assert.strictEqual(
+    lockApproveBoxes(body),
+    [
+      '- ⏳ <!-- tuffgal-approve-item:visit-home --> Approve **Home hero**',
+      '- ⏳ <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit. ⏳ Locked while an approval runs.',
+    ].join('\n')
+  );
+});
+
+test('lockApproveBoxes: locks a still-TICKED box too, so nothing can retrigger', () => {
+  const locked = lockApproveBoxes('- [x] <!-- tuffgal-approve-item:visit-home --> Approve **Home hero**');
+  assert.strictEqual(locked, '- ⏳ <!-- tuffgal-approve-item:visit-home --> Approve **Home hero**');
+  assert.strictEqual(hasTickedApproveMarker(locked), false);
+});
+
+test('lockApproveBoxes: is idempotent — the locked suffix is never doubled', () => {
+  const once = lockApproveBoxes('- [ ] <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit.');
+  assert.strictEqual(lockApproveBoxes(once), once);
+});
+
+test('unlockApproveBoxes: restores both box shapes and drops the locked suffix', () => {
+  const original = [
+    '- [ ] <!-- tuffgal-approve-item:visit-home --> Approve **Home hero**',
+    '- [ ] <!-- tuffgal-approve-box --> **Approve these baselines** — tick to commit.',
+  ].join('\n');
+  assert.strictEqual(unlockApproveBoxes(lockApproveBoxes(original)), original);
+});
+
+test('unlockApproveBoxes: is idempotent on an already-unlocked body', () => {
+  const body = '- [ ] <!-- tuffgal-approve-item:visit-home --> Approve **Home hero**';
+  assert.strictEqual(unlockApproveBoxes(body), body);
+});
+
+test('a locked body is DECLINED by the REAL resolveApprover', () => {
+  const locked = lockApproveBoxes(tickedStickyBody());
+  assert.strictEqual(hasTickedApproveMarker(locked), false);
+  const result = resolveApprover({
+    eventName: 'issue_comment',
+    action: 'edited',
+    comment: { body: locked, user: { login: 'tuffgal[bot]' } },
+    issue: { number: 7, pull_request: { url: 'https://api/pulls/7' } },
+    contextActor: 'maintainer',
+  });
+  assert.strictEqual(result.proceed, false);
+});
+
+test('a locked body carries none of the consumer workflow prefilter substrings', () => {
+  const locked = lockApproveBoxes(tickedStickyBody());
+  for (const substring of TRIGGER_SUBSTRINGS) {
+    assert.ok(!locked.includes(substring), `locked body still carries ${substring}`);
+  }
+});
+
+test('lock then unlock round-trips a real sticky body byte-for-byte', () => {
+  const unticked = untickApproveBoxes(tickedStickyBody());
+  assert.strictEqual(unlockApproveBoxes(lockApproveBoxes(unticked)), unticked);
+});
+
+// --- the in-flight lock marker -------------------------------------------- //
+
+test('inFlightMarker embeds the run id; inFlightRunId reads it back', () => {
+  const marker = inFlightMarker(4242);
+  assert.strictEqual(marker, '<!-- tuffgal-approve-inflight:4242 -->');
+  assert.strictEqual(inFlightRunId(`${REPORT_MARKER}\n${marker}\nbody`), '4242');
+});
+
+test('inFlightMarker strips anything that is not a digit from the run id', () => {
+  assert.strictEqual(inFlightMarker('42x/../7'), '<!-- tuffgal-approve-inflight:427 -->');
+});
+
+test('inFlightRunId is null for a body with no marker, and for a terminal banner', () => {
+  assert.strictEqual(inFlightRunId(`${REPORT_MARKER}\nnothing here`), null);
+  const terminal = withStatusBanner(`${REPORT_MARKER}\nbody`, ['> ✅ **All baselines approved**.']);
+  assert.strictEqual(inFlightRunId(terminal), null);
+});
+
+test('the terminal banner write releases an in-flight lock', () => {
+  const inFlight = withStatusBanner(`${REPORT_MARKER}\nbody`, [
+    inFlightMarker(99),
+    '> ⚙️ **Approving baselines** — committing…',
+  ]);
+  assert.strictEqual(inFlightRunId(inFlight), '99');
+  const done = withStatusBanner(inFlight, ['> ✅ **All baselines approved**.']);
+  assert.strictEqual(inFlightRunId(done), null);
+});
+
+// --- the queued-request note ---------------------------------------------- //
+
+const QUEUED_NOTE = '> ⏳ **Another approval is already running** — this request from @dev was ignored.';
+
+test('withQueuedNote lands its own block under the status banner', () => {
+  const inFlight = withStatusBanner(`${REPORT_MARKER}\nbody`, [
+    inFlightMarker(99),
+    '> ⚙️ **Approving baselines** — committing…',
+  ]);
+  const noted = withQueuedNote(inFlight, [QUEUED_NOTE]);
+  assert.ok(noted.includes(QUEUED_OPEN) && noted.includes(QUEUED_CLOSE));
+  assert.ok(noted.indexOf(STATUS_CLOSE) < noted.indexOf(QUEUED_OPEN), 'note follows the banner');
+  assert.ok(noted.includes(QUEUED_NOTE));
+});
+
+test('a phase banner rewrite leaves the queued note intact', () => {
+  const noted = withQueuedNote(
+    withStatusBanner(`${REPORT_MARKER}\nbody`, [inFlightMarker(99), '> ⚙️ **Approving baselines**…']),
+    [QUEUED_NOTE]
+  );
+  const nextPhase = withStatusBanner(noted, [inFlightMarker(99), '> 📦 **Candidates fetched** — committing…']);
+  assert.ok(nextPhase.includes('📦 **Candidates fetched**'));
+  assert.ok(nextPhase.includes(QUEUED_NOTE), 'the running job must not wipe a note it never saw added');
+});
+
+test('a repeated refusal replaces the note instead of stacking a second one', () => {
+  const once = withQueuedNote(`${REPORT_MARKER}\nbody`, [QUEUED_NOTE]);
+  const twice = withQueuedNote(once, ['> ⏳ **Another approval is already running** — this request from @other was ignored.']);
+  assert.strictEqual(twice.split(QUEUED_OPEN).length - 1, 1);
+  assert.ok(!twice.includes('@dev'));
+  assert.ok(twice.includes('@other'));
+});
+
+test('clearQueuedNote removes the block, and is a no-op when there is none', () => {
+  const noted = withQueuedNote(`${REPORT_MARKER}\nbody`, [QUEUED_NOTE]);
+  const cleared = clearQueuedNote(noted);
+  assert.ok(!cleared.includes(QUEUED_OPEN) && !cleared.includes(QUEUED_CLOSE));
+  assert.ok(!cleared.includes(QUEUED_NOTE));
+  assert.strictEqual(clearQueuedNote(cleared), cleared);
+});
+
+test('the terminal transform restores a locked, noted body to a clickable one', () => {
+  // The full in-flight shape: locked boxes, phase banner, a refused request noted.
+  const inFlight = withQueuedNote(
+    withStatusBanner(lockApproveBoxes(untickApproveBoxes(tickedStickyBody())), [
+      inFlightMarker(99),
+      '> ⚙️ **Approving baselines** — committing…',
+    ]),
+    [QUEUED_NOTE]
+  );
+  const terminal = withStatusBanner(
+    clearQueuedNote(untickApproveBoxes(unlockApproveBoxes(inFlight))),
+    ['> ⚠️ **Approval didn\'t complete** — retry.']
+  );
+  assert.ok(terminal.includes('- [ ] <!-- tuffgal-approve-box'), 'the retry it offers is clickable again');
+  assert.ok(terminal.includes('- [ ] <!-- tuffgal-approve-item:'), 'per-item boxes are re-tickable');
+  assert.ok(!terminal.includes('⏳ Locked while an approval runs.'));
+  assert.ok(!terminal.includes(QUEUED_NOTE));
+  assert.strictEqual(inFlightRunId(terminal), null, 'the lock is released');
+  assert.strictEqual(hasTickedApproveMarker(terminal), false);
+});
