@@ -1,15 +1,9 @@
 'use strict';
 //
-// Unit tests for the pure sticky-comment status helpers. No deps beyond Node's
-// built-in `node:test` + `node:assert` — run with
-// `node --test approve/scripts/*.test.js`.
-//
-// The loop-safety arms are the security-load-bearing cases: untickApproveBoxes
-// must strip every ticked approve marker, hasTickedApproveMarker must flag any
-// body that could retrigger the approve workflow, and the integration test proves
-// the transformed body is DECLINED by the REAL resolve-approver.js parser — not
-// just by this module's own regexes. Those MUST fail if the corresponding guard
-// regresses.
+// Tests for the sticky-comment status helpers. The loop-safety arms are the
+// load-bearing ones: no transform may leave a ticked approve marker, and the
+// integration arm proves it against the REAL resolve-approver.js parser rather
+// than this module's own regexes.
 //
 const { test } = require('node:test');
 const assert = require('node:assert');

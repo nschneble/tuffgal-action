@@ -69,32 +69,15 @@ function stripApproveCta(body) {
   return bodyLines.slice(0, end).join('\n');
 }
 
-// After a PARTIAL approve, rewrite the sticky comment body so the just-approved
-// per-item boxes become non-interactive "✅ Approved" lines and the top-level box
-// reflects that only the remaining items are still pending. `approvedKeys` is the
-// flat array of action keys this trigger approved — resolveApprover's `selection`
-// for a partial per-item approve. It is NEVER 'all' here: a full approve (mention
-// or top-level box) strips the whole CTA instead and never calls this. Runs AFTER
-// untickApproveBoxes, so every box is already in its `[ ]` form.
-//
-//   - A per-item box whose EVERY marker key is present in `approvedKeys` (and that
-//     carries at least one key — an empty-payload box approves nothing, mirroring
-//     resolve-approver.js's "no keys, no trigger") is rewritten to
-//     `- ✅ Approved **name** (suffix)`, dropping BOTH the checkbox and the marker
-//     comment: an approved item leaves nothing to parse or re-trigger.
-//   - A per-item box that is not (fully) approved is left completely untouched —
-//     present, unticked, still re-tickable — exactly as untickApproveBoxes left it.
-//   - When any per-item box remains, the top-level box keeps its marker + `[ ]`
-//     state byte-identical and only its human label changes to "Approve remaining
-//     baselines …". When NONE remains (a partial that happened to cover every
-//     item), the whole CTA is stripped instead — the same terminal state a full
-//     approve reaches — so no "remaining" label dangles over zero remaining items.
+// Resolve the CTA after a PARTIAL approve: approved item boxes become inert
+// "✅ Approved" lines, the top-level box is relabeled to the remaining ones, and a
+// partial that happened to cover everything strips the CTA like a full approve.
+// `approvedKeys` is never 'all' — a full approve strips the CTA and never calls
+// this. Runs AFTER untickApproveBoxes.
 //
 // LOOP SAFETY (load-bearing). An "✅ Approved" line carries neither the item marker
-// nor any checkbox syntax, and the top-level box is only ever relabeled (never
-// re-ticked), so the returned body can never gain a ticked approve marker. The
-// caller in action.yml still asserts !hasTickedApproveMarker on the composed body
-// before writing, same discipline as every other transform in this module.
+// nor any checkbox syntax, and the top-level box is only relabeled, never
+// re-ticked, so the result can never gain a ticked approve marker.
 function applyPartialApproval(body, approvedKeys) {
   const approved = new Set((Array.isArray(approvedKeys) ? approvedKeys : []).map(asString));
   const lines = asString(body).split('\n');

@@ -1,22 +1,12 @@
 'use strict';
 //
-// Pure, unit-testable logic for the approve flow's "Commit baselines to PR head
-// branch" step. Extracted out of the inline `actions/github-script` block so the
-// security-sensitive path handling and deletion math can be exercised by a
-// `node --test` suite without a live GitHub run — the same extract-and-unit-test
-// precedent set by the sibling `validate-artifact.sh`.
+// The path handling and deletion math behind the approve flow's baseline commit.
+// The API calls (createBlob / createTree / createCommit / updateRef) and the
+// `git ls-tree` stay inline in action.yml.
 //
-// This module owns ONLY the pure pieces. The thin GitHub API calls
-// (createBlob / createTree / createCommit / updateRef) and the `git ls-tree`
-// execFileSync stay inline in action.yml; the inline script requires this module
-// and calls these functions. `toRepoPath`, `computeDeletions`, and `deriveFrames`
-// reproduce the previous inline logic byte-for-byte. Two functions diverge from
-// the inline original, both deliberately and both security-load-bearing:
-//   - `guard` throws the tagged `BaselineScopeError` instead of a bare `Error`,
-//     so a scope rejection is a distinguishable fail-closed type callers can
-//     re-throw rather than swallow (see the BaselineScopeError note).
-//   - `walk` additionally rejects symlinks fail-closed, also throwing
-//     `BaselineScopeError` (see its SECURITY note).
+// Two functions fail closed with the tagged `BaselineScopeError` rather than a
+// bare Error, so a caller can re-throw a scope rejection instead of swallowing it:
+// `guard` (out-of-scope path) and `walk` (symlink).
 //
 const path = require('path');
 
@@ -52,21 +42,12 @@ function guard(candidatePath, prefix) {
 // Recursively collect every regular file under `dir`, returning absolute paths.
 // `fs` is injected so the walk can run against a temp tree in tests.
 //
-// SECURITY: uses `fs.lstatSync` (does NOT follow symlinks) and REJECTS any
-// symlink fail-closed by throwing. The tree walked here is materialized from the
-// PR head via `git archive | tar -x` — UNTRUSTED input a write collaborator
-// controls, and `git archive` faithfully recreates any symlink committed in it.
-// The caller blobs each returned file's bytes via `fs.readFileSync` (which
-// dereferences), so a followed symlink would commit the TARGET's bytes (e.g.
-// `../../.npmrc`, `/proc/self/environ` holding the job token) onto the PR branch
-// where the author reads them — write access → secret disclosure. So a symlink
-// is refused outright: never followed, never silently skipped. `lstatSync` is
-// load-bearing here — `statSync` would report a symlink-to-dir as a directory
-// (recursing into the target) and a symlink-to-file as a plain file (blobbing
-// the target). Mirrors `validate-artifact.sh`'s fail-closed posture for the
-// sibling untrusted input (the candidates artifact). The refusal throws the
-// tagged `BaselineScopeError` — the SAME fail-closed type `guard` raises — so
-// both security throws are one distinguishable, catch-placement-independent type.
+// SECURITY: this tree comes from the PR head via `git archive | tar -x`, so a
+// write collaborator can commit a symlink into it, and the caller blobs each
+// returned file with `readFileSync` (which dereferences) — a followed symlink
+// would commit the TARGET's bytes onto the PR branch. Symlinks are refused
+// outright, throwing `BaselineScopeError`. `lstatSync` is load-bearing: `statSync`
+// would report a symlink-to-dir as a directory and recurse into the target.
 function walk(dir, fs) {
   const out = [];
   if (!fs.existsSync(dir)) return out;

@@ -1,25 +1,14 @@
 'use strict';
 //
-// Pure, unit-testable decision for the per-PR Pages preview push: given the
-// combined stdout/stderr/message of a failed `git push`, decide whether a
-// re-sync + retry can plausibly succeed. The retryable-vs-terminal
-// classification — the one part of the retry loop with a right answer that live
-// git can't exercise in CI — is covered by a `node --test` suite. The git side
-// effects themselves (clone / stage / commit / push / re-sync) stay inline; this
-// module owns ONLY the verdict.
+// Is a failed `git push` to the shared preview branch worth retrying? Only the
+// verdict lives here; the git side effects stay inline.
 //
-// Two visual runs on DIFFERENT PRs (or reruns) can overlap on the shared
-// preview branch. Each replaces only its own `pr-<n>/` subtree, so the changes
-// are disjoint — but the second push is rejected non-fast-forward because its
-// shallow clone predates the first push. Re-fetching the advanced tip and
-// re-applying this PR's (idempotent) subtree resolves it cleanly, so a
-// non-fast-forward rejection is RETRYABLE.
-//
-// A permission / auth failure (no `contents: write`, protected branch, bad
-// credential) will NEVER succeed on retry — retrying just wastes attempts and
-// delays the artifact-link fallback — so it is TERMINAL. Anything we don't
-// recognize is treated as terminal too: fall straight to the best-effort
-// fallback rather than loop on an error we can't reason about.
+// Two runs on DIFFERENT PRs can overlap on the branch. Their `pr-<n>/` subtrees
+// are disjoint, so a non-fast-forward rejection is RETRYABLE — re-fetch the
+// advanced tip, re-apply this PR's idempotent subtree. A permission / auth /
+// protected-branch failure never succeeds on retry, so it is TERMINAL, as is
+// anything unrecognized: fall to the artifact-link fallback rather than loop on an
+// error we can't reason about.
 
 // Signals that a push failed for a reason no retry can fix. Checked FIRST, so a
 // server-side decline that also prints a generic "failed to push some refs"

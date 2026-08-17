@@ -3,16 +3,9 @@
 // Pure, unit-testable logic for the approve flow's "Download candidates artifact"
 // step: ordering the PR head's completed runs newest-first and, WITHIN a run,
 // deciding whether its artifacts yield a single promotable candidate, an
-// ambiguous set, or nothing. Extracted out of the inline `actions/github-script`
-// block so the fail-closed selection can be exercised by a `node --test` suite
-// without a live GitHub run. The API side stays inline.
-//
-// This module owns ONLY the pure decision. The `github.paginate` calls that
-// fetch runs + per-run artifacts, and the createComment / setFailed side effects,
-// stay inline in action.yml, which iterates the runs newest-first and fetches
-// each run's artifacts LAZILY — stopping at the first run with any match. This
-// module never performs I/O, so that laziness (and its API-call profile) is
-// preserved: the inline loop classifies one already-fetched run at a time.
+// ambiguous set, or nothing. The paginate calls and the comment / setFailed side
+// effects stay inline, which lets action.yml fetch each run's artifacts LAZILY —
+// this module classifies one already-fetched run at a time.
 //
 // FAIL-CLOSED: ambiguity WITHIN the selected run — a matrix / smoke
 // suite that uploads multiple same-named artifacts — is an error, not a coin

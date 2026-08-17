@@ -1,16 +1,9 @@
 'use strict';
 //
-// Unit tests for the pure candidate-selection filter. No deps beyond Node's
-// built-in `node:test` + `node:assert` — run with
-// `node --test approve/scripts/*.test.js`.
-//
-// This is a security-load-bearing filter: it turns an UNTRUSTED per-item approve
-// selection (parsed from a PR comment a write actor can edit) into the set of
-// candidate action-dirs the CLI is allowed to promote. The malformed-key and the
-// 'all' no-op arms are the load-bearing cases — the first MUST drop spoofed keys
-// fail-closed (never keep, never remove, never throw), the second MUST leave the
-// tree untouched so every existing full-approve consumer is byte-for-byte
-// unchanged. Both MUST fail if the corresponding guard is reverted.
+// Tests for the candidate-selection filter, which turns an UNTRUSTED per-item
+// selection into the dirs the CLI may promote. Load-bearing arms: a spoofed key is
+// dropped fail-closed (never kept, never removed, never thrown), and 'all' leaves
+// the tree untouched.
 //
 const { test } = require('node:test');
 const assert = require('node:assert');

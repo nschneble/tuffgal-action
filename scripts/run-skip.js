@@ -1,33 +1,15 @@
 "use strict";
 //
-// Pure, unit-testable decision for the MAIN action's "skip the redundant rerun"
-// shortcut — the READER side of the full-approval fast path. After a maintainer
-// approves the pending baselines, approve/action.yml commits them onto the PR
-// head branch. When that push is made with a custom PAT / GitHub App token (a
-// documented, legitimate option), GitHub DOES retrigger the consumer's visual
-// workflow — and the whole Tuffgal suite reruns against a tree byte-identical to
-// the one that was just approved. This module decides whether the triggering
-// commit is provably that redundant full-approval commit, so the main action can
-// emit a fast `outcome=pass` instead of re-running Playwright.
+// The READER side of the full-approval fast path: is the triggering commit
+// provably the redundant baseline-promotion commit, so the suite can emit a fast
+// pass instead of re-running Playwright against a byte-identical tree. Fires on
+// the PAT-token path; check synthesis covers the `GITHUB_TOKEN` one.
 //
-// The check-synthesis shortcut (approve/scripts/check-shortcut.js) only helps
-// the default-`GITHUB_TOKEN` path, where the push fires no workflow at all so
-// there is nothing to skip. This module covers the PAT-token path. Both can fire
-// on the same approval under a PAT + a configured check-name — the synthesized
-// check plus this real-but-instant short-circuited run, both green.
-//
-// SECURITY: this trusts a commit-message trailer as a "was this genuinely
-// approved" signal, so skipping incorrectly is the sharp edge. It is judged an
-// acceptable build-speed optimization, NOT a security boundary, because the skip
-// is gated on a SAME-REPO push: pushing to a branch in the base repo already
-// requires write access, and an actor with write access could simply approve the
-// baselines for real. A fork PR's head lives in a repo the fork author does not
-// control write-wise on the base side, so the same-repo gate is the load-bearing
-// exclusion and is checked FIRST — a fork PR can never reach the trailer/file
-// logic. Every ambiguous, malformed, or missing input fails SAFE: it falls back
-// to running the full suite (today's behavior), never skips. No cryptographic
-// verification is added — out of scope for this threat model; any tampering is
-// visible in git history via the trailer + parent-SHA linkage.
+// SECURITY: this trusts a commit-message trailer, so it is a build-speed
+// optimization, NOT a security boundary — the SAME-REPO gate is what makes that
+// acceptable (pushing to a base-repo branch already requires write access) and is
+// checked FIRST, so a fork PR never reaches the trailer logic. Every ambiguous,
+// malformed, or missing input fails SAFE to running the full suite.
 
 // The commit-message trailer the WRITER (approve/action.yml) stamps onto a
 // full-clear approval commit. This is a HAND-DUPLICATED cross-package contract:
@@ -64,29 +46,11 @@ function baselinesPrefixFrom(workingDirectory, baselinesPath) {
   return segments.join("/");
 }
 
-// Decide whether the triggering commit is provably a redundant full-approval
-// commit whose visual suite can be skipped.
-//   input:
-//     - message:           the triggering commit's message.
-//     - parentShas:        that commit's parent SHAs (string[]).
-//     - headRepoFullName:  `owner/repo` of the PR head (fork side).
-//     - baseRepoFullName:  `owner/repo` of the PR base.
-//     - files:             the commit's changed files as [{ path }] (repo-root
-//                          relative, POSIX).
-//     - filesTruncated:    true when the changed-file list is incomplete
-//                          (>= 300 files -> the API paginated), so scope is
-//                          unverifiable.
-//     - baselinesPrefix:   repo-root-relative baselines prefix (from
-//                          baselinesPrefixFrom).
-//   output: { skip: boolean, reason: string }. skip is true ONLY when ALL hold:
-//     1. head repo === base repo (a same-repo push; fork PRs never skip).
-//     2. the message carries the full-approval trailer, its SHA equals the SOLE
-//        parent (exactly one parent — rules out merges and a rebase/replay whose
-//        approval commit picked up a new parent).
-//     3. the changed-file list is fully known, non-empty, and EVERY file sits
-//        under `<baselinesPrefix>/`.
-//   Any missing / malformed / ambiguous input -> { skip: false } (fail-safe:
-//   fall back to running the full suite).
+// Skip only when ALL three hold: same-repo push (fork PRs never skip), the
+// full-approval trailer names the SOLE parent (rules out merges and a rebase that
+// picked up a new one), and every changed file sits under the baselines prefix
+// with the file list known to be complete. Anything else fails safe to a full
+// run.
 function decideRunSkip({
   message,
   parentShas,

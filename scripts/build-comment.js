@@ -1,22 +1,11 @@
 "use strict";
 //
-// Pure, unit-testable builder for the sticky PR comment body. Given the pieces
-// the `Post sticky PR comment` step has already computed — the parsed outcome +
-// counts, the env-mismatch flag and keys, the (possibly empty) preview URL, the
-// per-story per-breakpoint image URLs read out of results.json, and whether the
-// run spanned more than one breakpoint — it returns the final markdown `body`
-// string, so the branch matrix (preview vs none, changed/new/deleted/failed
-// sections, env-mismatch banner, approve CTA, pass/failed/no-results outcomes,
-// and the compact short-circuit skipped-suite body) is covered by a
-// `node --test` suite.
+// Assembles the sticky PR comment body from the section renderers. The API side —
+// reading env, resolving image paths, the listComments / updateComment upsert —
+// stays inline in action.yml.
 //
-// The GitHub API side of the step — reading env, resolving results.json image
-// paths to preview URLs, and the `listComments` / `updateComment` /
-// `createComment` upsert — STAYS inline; this module owns ONLY the pure body
-// string. The marker and the table/banner renderers are extracted here for
-// reuse; the bash step-summary still hand-duplicates them (bash can't `require`
-// this module), so these are kept in step with that summary rather than being
-// its single source of truth.
+// The marker, totals table, and env-mismatch banner are HAND-DUPLICATED by the
+// bash step-summary, which can't `require` this module; keep the two in step.
 
 // Injected as the first line of every comment body. The upsert step greps for
 // this marker to find the comment to update, so it is exported rather than
@@ -73,32 +62,13 @@ const ACTIONABLE = {
     "Download the `tuffgal-report` artifact and open `index.html` for story-by-story diffs and traces.",
 };
 
-// Build the full sticky-comment markdown body.
+// Build the full sticky-comment markdown body. Story entries come from
+// build-stories.js, which documents their shape; `counts` are strings (Actions
+// outputs), and an empty `previewUrl` means no preview published.
 //
-//   outcome       one of pass / changed / env-mismatch / failed / no-results
-//   counts        { passed, changed, new, deleted, failed, total } as strings
-//   envMismatch   boolean — render the capture-environment banner
-//   mismatchKeys  string[] — the changed environment keys, listed under the banner
-//   previewUrl    normalized Pages URL (no trailing slash), or '' when no preview
-//   changed       entries from build-stories.js, which documents their shape.
-//                 A shot carrying `a11yOnly` renders as a fenced diff instead of
-//                 thumbnails — and renders with no preview, since a diff needs
-//                 nothing hosted.
-//   added         same shape; each shot carries `actual` only (the proposed
-//                 baseline — no prior one exists).
-//   deleted       [{ name, breakpoints }] — one entry per removed story/action,
-//                 grouped across breakpoints. `breakpoints` renders only in
-//                 multi-breakpoint mode.
-//   failed        [{ index, name, message, breakpoint }] — no approve checkbox:
-//                 a failure is not an approvable change.
-//   multiBreakpoint  boolean — drives per-breakpoint detail rows + labels.
-//   runUrl        the workflow-run URL for the fallback link
-//   shortCircuit  optional { sha } — when present, the run was skipped because
-//                 the triggering commit only promotes already-approved
-//                 baselines. Renders a compact body (marker + header + pass +
-//                 one explanatory line naming the reviewed commit + run link)
-//                 and returns early. Carries NO approve markers of any kind:
-//                 nothing is pending, so there is nothing to tick.
+// `shortCircuit: { sha }` renders the compact skipped-suite body and returns
+// early, carrying NO approve markers — nothing is pending, so there is nothing to
+// tick.
 function buildCommentBody({
   outcome,
   counts,

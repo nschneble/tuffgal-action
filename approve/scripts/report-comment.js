@@ -1,32 +1,18 @@
 'use strict';
 //
-// Pure, unit-testable helpers for the approve flow's LIVE sticky-comment status
-// edits. As an approval runs (permission gate -> candidate fetch -> commit), the
-// bot rewrites the SAME `<!-- tuffgal-report -->` sticky comment through
-// in-flight -> milestone -> final banners so a maintainer watching the PR sees
-// progress instead of a frozen comment. The box-locking and in-flight-lock half of
-// that lifecycle lives in the sibling approve-lock.js. Extracted out of the inline
-// `actions/github-script` blocks in approve/action.yml so the loop-safety-critical
-// body transforms are exercised by a `node --test` suite. The GitHub API side
-// (listComments / getComment / updateComment) stays inline in action.yml.
+// The status blocks the approve flow writes into the sticky comment as it runs.
+// Box locking lives in the sibling approve-lock.js; the API calls stay inline.
 //
-// LOST-UPDATE. GitHub's comment API offers no ETag / If-Match, so every write
-// built from these transforms is last-writer-wins against a body read moments
-// earlier. The refusal path in action.yml re-reads immediately before writing
-// (it is the only write made by a job that does not own the lock); the rest rely
-// on the consumer's per-PR concurrency group to keep two approvals from
-// interleaving in the first place.
+// LOST-UPDATE. GitHub's comment API has no ETag / If-Match, so every write is
+// last-writer-wins against a body read moments earlier. The refusal path re-reads
+// immediately before writing; the rest rely on the consumer's per-PR concurrency
+// group.
 //
-// LOOP SAFETY (load-bearing). The consumer's tuffgal-approve workflow retriggers
-// on an `issue_comment: edited` whose body contains a TICKED approve marker (see
-// examples/tuffgal-approve.yml's `if:`). Every body this module hands back for a
-// comment edit MUST carry ALL approve markers in their UNTICKED `[ ]` form, or the
-// bot could edit its own comment into a shape that re-fires the approve workflow
-// on itself — an infinite loop. `untickApproveBoxes` is that transform;
-// `hasTickedApproveMarker` is the defensive predicate action.yml asserts against
-// the outgoing body before every write. (A second, independent barrier — using the
-// default GITHUB_TOKEN for these edits, which GitHub does not fire workflow events
-// for — lives in action.yml.)
+// LOOP SAFETY (load-bearing). The consumer workflow retriggers on an `edited`
+// event whose body carries a TICKED approve marker, so every body handed back here
+// must carry them UNTICKED or the bot re-fires the approve workflow on its own
+// edit. `untickApproveBoxes` is that transform; `hasTickedApproveMarker` is the
+// predicate action.yml asserts before every write.
 
 // The sticky report comment's marker line. HAND-DUPLICATED, byte-for-byte, from
 // `scripts/build-comment.js`'s `MARKER` constant, which lives in the SEPARATE

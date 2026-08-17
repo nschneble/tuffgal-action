@@ -136,25 +136,14 @@ function deletedEntries(result) {
   return out;
 }
 
-// Build the comment's entry arrays from a parsed results.json.
+// Build the comment's entry arrays from a parsed results.json. `index` is the
+// story's position in the stories array — the ordinal tuffgal's report renders as
+// `id="story-<index>"`, so `#story-<index>` lands on the right story.
 //
-//   result       the parsed RunResult
-//   previewUrl   normalized Pages URL (no trailing slash), or '' when no preview
-//   reportAbs    absolute report-path root, for image URL resolution
-//   baselinesAbs absolute baselines-path root, same
-//
-// `index` is the story's position in the stories array — the SAME ordinal
-// tuffgal's report renders as `id="story-<index>"`, so `#story-<index>`
-// deep-links land on the right story.
-//
-// BUCKETING. A hard failure takes the whole story (the rollup order is failed >
-// changed > new > pass), so a failed story never lands in changed/new and carries
-// no approve keys — a failure is not an approvable change. A story that both
-// wrote a fresh baseline AND drifted an existing one is listed in BOTH sections,
-// each with only its own status's shots and keys: one checkbox approves the new
-// baselines, the other the changed ones. Filing it under a single bucket would
-// silently drop the other status's keys, leaving those candidates unapprovable
-// from the comment.
+// BUCKETING. A hard failure takes the whole story and carries no approve keys. A
+// story that BOTH wrote a fresh baseline and drifted an existing one is listed in
+// both sections, each with only its own status's shots and keys — one bucket would
+// silently drop the other's keys, leaving those candidates unapprovable.
 function buildStories({ result, previewUrl, reportAbs, baselinesAbs }) {
   const urls = { previewUrl, reportAbs, baselinesAbs };
   const changed = [];

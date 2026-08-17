@@ -1,40 +1,15 @@
 'use strict';
 //
-// Pure, unit-testable logic for the approve flow's permission-gate step: deciding
-// whether a comment event is an approve trigger, WHO the approver is, and the
-// fail-closed early-outs. Extracted out of the inline `actions/github-script`
-// block so the who-can-approve trust boundary can be exercised by a `node --test`
-// suite without a live GitHub run — the same extract-and-unit-test precedent set
-// by the sibling `validate-artifact.sh` and `baseline-tree.js`.
+// The approve flow's permission gate: is this comment event a trigger, and who is
+// the approver. The API side (reaction, permission lookup, fork decline, PR-head
+// resolution) stays inline in action.yml.
 //
-// This module owns ONLY the pure decision. The API-bound side effects that
-// FOLLOW it — the 👀 reaction, the repository-permission lookup, the fork
-// decline, and the PR-head resolution — stay inline in action.yml; the inline
-// script requires this module and acts on its verdict.
+// On a MENTION the approver is the comment author; on a CHECKBOX tick it is the
+// EDITOR, since the comment itself is the bot's.
 //
-// TWO trigger shapes drive the approve. They differ in WHO the approver is and —
-// for a partial per-item approve — in WHAT gets promoted (a mention or the master
-// box approves everything; ticked item boxes narrow to the selected stories):
-//   - mention:  a human comments `@tuffgal approve` → the approver is the comment
-//               AUTHOR (`comment.user.login`).
-//   - checkbox: a human TICKS a box in the bot's sticky report comment
-//               (`issue_comment: edited`). The comment author is the bot, so the
-//               approver is the EDITOR (`context.actor`). Two box shapes count as
-//               a checkbox trigger, both gated behind the report marker + edited
-//               event (the identical trust boundary):
-//                 · MASTER box  — the checked `<!-- tuffgal-approve-box -->` box:
-//                   approve everything (`selection: 'all'`).
-//                 · ITEM boxes  — one or more checked
-//                   `<!-- tuffgal-approve-item:key,… -->` per-story boxes:
-//                   approve only the union of those ticked stories' action
-//                   keys (`selection: string[]`).
-//               The master box wins when both are ticked — the user asked for
-//               everything, so a partial state underneath it is moot.
-//
-// All shapes fail closed: a comment that is not on a PR, is neither trigger, or
-// whose approver is a bot (e.g. the visual workflow refreshing the sticky comment
-// with UNchecked boxes — an `edited` event we must never loop back into an
-// approval) resolves to `{ proceed: false }` and never reacts.
+// Everything fails closed — not a PR, neither trigger shape, or a bot-authored
+// actor (the visual workflow refreshing the sticky comment fires `edited` too, and
+// must never loop back into an approval) resolves to `{ proceed: false }`.
 
 // Per-item approve marker prefix from the comment body. Each ticked per-story box
 // carries its candidate-tree action keys comma-joined in the HTML comment, each

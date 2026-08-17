@@ -1,7 +1,6 @@
 "use strict";
 //
-// Unit tests for the pure sticky-comment body builder. No deps beyond Node's
-// built-in `node:test` + `node:assert` — run with `node --test scripts/*.test.js`.
+// Tests for the sticky-comment body builder.
 //
 const { test } = require("node:test");
 const assert = require("node:assert");

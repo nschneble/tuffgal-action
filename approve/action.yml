@@ -50,13 +50,10 @@ inputs:
 runs:
   using: composite
   steps:
-    # ------------------------------------------------------------------ #
-    # 1. Permission gate + PR resolution. Runs BEFORE any checkout,       #
-    #    download, or write. Fails closed: unauthorized commenters get a  #
-    #    👀 reaction and nothing else; fork PRs are declined with a note. #
-    #    The comment body is only ever read in JS and compared — it is    #
-    #    never interpolated into a shell command.                         #
-    # ------------------------------------------------------------------ #
+    # 1. Permission gate + PR resolution, BEFORE any checkout, download, or write.
+    #    Fails closed: an unauthorized commenter gets a 👀 and nothing else; a fork
+    #    PR is declined with a note. The comment body is only ever read and
+    #    compared in JS, never interpolated into a shell command.
     - name: Gate on permission + resolve PR
       id: gate
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -170,23 +167,12 @@ runs:
           // shapes round-trip cleanly through JSON.stringify / JSON.parse.
           core.setOutput('selection', JSON.stringify(selection));
 
-    # ------------------------------------------------------------------ #
-    # 1b. In-flight sticky-comment status. The MOMENT the gate proceeds,  #
-    #     rewrite the SAME `<!-- tuffgal-report -->` sticky comment to an  #
-    #     "approving now" banner so the maintainer sees progress instead   #
-    #     of a frozen comment during the (multi-minute) fetch + commit.    #
-    #                                                                     #
-    #     LOOP SAFETY: this uses the DEFAULT `github.token`, NOT           #
-    #     `inputs.token`. GitHub does not fire workflow events for comment #
-    #     edits made with GITHUB_TOKEN (recursion prevention), so this     #
-    #     edit can never retrigger the consumer's approve workflow — a      #
-    #     second, independent barrier on top of the untick transform,      #
-    #     which already rewrites every ticked approve box to `[ ]` before  #
-    #     the write and asserts `!hasTickedApproveMarker` on the outgoing  #
-    #     body. Emits `comment_id` (empty when no sticky comment exists);  #
-    #     every later report step no-ops on the empty case. Wrapped in     #
-    #     try/catch — a cosmetic status failure must never block approval. #
-    # ------------------------------------------------------------------ #
+    # 1b. In-flight status. Uses the DEFAULT `github.token`: GitHub fires no
+    #     workflow events for comment edits made with it, a second barrier on top
+    #     of the untick + `!hasTickedApproveMarker` assert. Emits `comment_id`,
+    #     empty when no sticky comment exists; every later report step no-ops on
+    #     that. Wrapped in try/catch — a cosmetic failure must never block the
+    #     approval itself.
     - name: Post in-flight status on the sticky report comment
       id: report_status
       if: steps.gate.outputs.proceed == 'true'
@@ -324,12 +310,9 @@ runs:
             core.warning(`Could not post in-flight status to the sticky comment: ${error.message}`);
           }
 
-    # ------------------------------------------------------------------ #
-    # 2. Check out the BASE repository's DEFAULT branch — trusted code    #
-    #    only. The PR head branch is never checked out or executed; it is #
-    #    used solely as a commit target (via the git data API) and as a   #
-    #    data-only source for its current baselines.                      #
-    # ------------------------------------------------------------------ #
+    # 2. Check out the BASE repo's DEFAULT branch — trusted code only. The PR head
+    #    is never checked out or executed: it is a commit target via the git data
+    #    API and a data-only source for its current baselines.
     - name: Checkout default branch (trusted)
       if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true'
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -351,11 +334,9 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: npm ci
 
-    # ------------------------------------------------------------------ #
-    # 3. Download the tuffgal-candidates artifact from the latest         #
-    #    completed run for the PR head SHA. Written to $RUNNER_TEMP,      #
-    #    outside the checkout, so it can never overwrite repo files.      #
-    # ------------------------------------------------------------------ #
+    # 3. Download the candidates artifact from the latest completed run for the PR
+    #    head SHA, into $RUNNER_TEMP — outside the checkout, so it can never
+    #    overwrite repo files.
     - name: Download candidates artifact
       id: download
       if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true'
@@ -446,11 +427,8 @@ runs:
             body: '<!-- tuffgal-approve -->\n⚠️ No `tuffgal-candidates` artifact was found for the latest run of this PR. Re-run the visual regression job, then comment `@tuffgal approve` again.',
           });
 
-    # ------------------------------------------------------------------ #
-    # 4. Validate the artifact BEFORE extraction (fail closed). Every zip #
-    #    entry must be a relative path with no traversal and an allowed   #
-    #    extension. Any violation aborts the job.                         #
-    # ------------------------------------------------------------------ #
+    # 4. Validate the artifact BEFORE extraction, fail closed: every zip entry must
+    #    be a relative, traversal-free path with an allowed extension.
     - name: Validate + extract candidates
       id: extract
       if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true'
@@ -471,29 +449,14 @@ runs:
         unzip -qq -o "$ZIP_PATH" -d "$CAND_DIR"
         echo "cand_dir=$CAND_DIR" >> "$GITHUB_OUTPUT"
 
-    # ------------------------------------------------------------------ #
-    # 4b. Narrow the extracted candidate tree to the approver's          #
-    #     selection BEFORE the CLI promotes it. A full approve            #
-    #     (selection 'all' — a mention or the master box) is a STRICT     #
-    #     no-op here: nothing is removed and the tree is byte-identical   #
-    #     to today's unconditional promote — the regression guard for     #
-    #     every existing full-approve consumer. A partial per-item        #
-    #     approve (selection is an array of action keys) DELETES every    #
-    #     candidate action-dir NOT in the validated selection; the CLI    #
-    #     walks whatever action-dirs are physically present under         #
-    #     `--from`, so removing a dir here is the sole, sufficient        #
-    #     mechanism to exclude it from promotion. `--prune`'s deleted-    #
-    #     baseline handling in the apply step is UNAFFECTED and stays     #
-    #     unconditional on full and partial approves alike.               #
-    #                                                                     #
-    #     SECURITY: the selection keys are UNTRUSTED (parsed from a PR    #
-    #     comment a write actor can edit their own copy of). The pure     #
-    #     module re-validates every key against ACTION_NAME_PATTERN and   #
-    #     drops any that fail; this caller re-validates AGAIN and only    #
-    #     ever rm's a path joined UNDER $CAND_DIR, never trusting a name  #
-    #     as a full path — defense in depth mirroring baseline-tree.js's  #
-    #     guard posture.                                                  #
-    # ------------------------------------------------------------------ #
+    # 4b. Narrow the extracted candidate tree to the approver's selection before
+    #     the CLI promotes it. The CLI walks whatever action-dirs are present
+    #     under `--from`, so removing a dir here is the sole mechanism that
+    #     excludes it. `--prune`'s deleted-baseline handling is unaffected.
+    #
+    #     SECURITY: selection keys are UNTRUSTED. The module re-validates them;
+    #     this caller re-validates AGAIN and only ever rm's a path joined UNDER
+    #     $CAND_DIR, never trusting a name as a full path.
     - name: Filter candidates to selection
       id: filter
       if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true'
@@ -587,14 +550,9 @@ runs:
           }
           core.info(`Partial approve: kept ${keep.length} of ${presentDirNames.length} candidate baseline(s); removed ${remove.length}.`);
 
-    # ------------------------------------------------------------------ #
-    # 4c. Milestone sticky-comment status. The candidates were fetched +  #
-    #     filtered, so advance the banner to "committing…". Re-FETCHES the #
-    #     comment fresh by id (never reuses step 1b's stale body — another #
-    #     process could have touched it since). No-ops when step 1b found  #
-    #     no sticky comment. Same DEFAULT-token + untick + assert +        #
-    #     try/catch-and-continue discipline as every report step.          #
-    # ------------------------------------------------------------------ #
+    # 4c. Milestone status. Re-FETCHES the comment fresh by id rather than reusing
+    #     step 1b's body, which another process could have touched since. No-ops
+    #     when no sticky comment was found.
     - name: Update sticky report comment with the fetched-candidates milestone
       id: report_milestone
       if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true' && steps.report_status.outputs.comment_id != ''
@@ -636,17 +594,11 @@ runs:
             core.warning(`Could not post milestone status to the sticky comment: ${error.message}`);
           }
 
-    # ------------------------------------------------------------------ #
-    # 5. Preflight the trusted default-branch CLI for `approve --from`    #
-    #    support BEFORE we invoke it. A tuffgal older than                #
-    #    `0.2.0-alpha.1` has no `--from`, silently falls through to a     #
-    #    plain `approve`, and dies with a cryptic "no prior run" error.   #
-    #    We probe the CLI's own help text for the flag (robust across     #
-    #    prerelease version ordering) and, if it's missing, post a        #
-    #    pointed comment and fail. Gated identically to the apply step so #
-    #    a stale-tuffgal repo with NO candidates still gets the           #
-    #    friendlier "No candidates found" path, not this.                 #
-    # ------------------------------------------------------------------ #
+    # 5. Preflight `approve --from` support before invoking it: a tuffgal older
+    #    than `0.2.0-alpha.1` silently falls through to a plain `approve` and dies
+    #    with a cryptic "no prior run". Probing the help text is robust across
+    #    prerelease version ordering. Gated like the apply step, so a stale-tuffgal
+    #    repo with NO candidates still gets the friendlier not-found path.
     - name: Preflight tuffgal supports approve --from
       if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true'
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -695,12 +647,9 @@ runs:
           });
           core.setFailed('Installed tuffgal does not support `approve --from`; bump tuffgal on the default branch.');
 
-    # ------------------------------------------------------------------ #
-    # 6. Seed the baselines directory from the PR head (DATA ONLY — no    #
-    #    code is checked out or run) so prune operates against the head's #
-    #    committed set, then apply the candidates via the CLI. The CLI    #
-    #    owns the tree copy, prune, and manifest write.                   #
-    # ------------------------------------------------------------------ #
+    # 6. Seed the baselines directory from the PR head (DATA ONLY — no code is
+    #    checked out or run) so prune operates against the head's committed set,
+    #    then apply the candidates. The CLI owns the copy, prune, and manifest.
     - name: Apply candidates via tuffgal approve
       if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true'
       shell: bash
@@ -749,30 +698,17 @@ runs:
         # CLI owns baseline promotion, prune, and manifest.json.
         npx tuffgal approve --from "$CAND_DIR" --prune
 
-    # ------------------------------------------------------------------ #
-    # 7. Commit ONLY the baselines directory onto the PR head branch via  #
-    #    the git data API. Parent is the head SHA; the head branch is     #
-    #    never checked out. Paths are scoped to baselines-path.           #
-    #                                                                     #
-    #    The commit, updateRef, reaction, and success comment all use the #
-    #    `token` input (default `GITHUB_TOKEN`). A push made with          #
-    #    `GITHUB_TOKEN` will NOT retrigger the consumer's visual workflow  #
-    #    (GitHub's recursion prevention), so the success comment tells the #
-    #    maintainer how to kick it; supplying a PAT / App token makes the  #
-    #    check re-run automatically. TOKEN_IS_DEFAULT carries that fact    #
-    #    into the script without exposing the token value.                #
-    #                                                                     #
-    #    Re-run shortcut: after the ref fast-forwards to the NEW commit,   #
-    #    if a `check-name` is configured AND this approval was a FULL      #
-    #    clear (every pending candidate promoted — the pure                #
-    #    shouldSynthesizeCheck gate over the filter step's kept/total),    #
-    #    synthesize a passing Check Run on that new SHA per named check.   #
-    #    The committed tree is byte-identical to the captured run, so the  #
-    #    rerun is provably redundant. Fail-closed on a partial approve.    #
-    #    checks.create failure degrades gracefully (a missing              #
-    #    `checks: write` is an expected not-configured state → notice; any #
-    #    other error → warning) and never fails the job.                  #
-    # ------------------------------------------------------------------ #
+    # 7. Commit ONLY the baselines directory onto the PR head branch via the git
+    #    data API — parent is the head SHA, the branch is never checked out.
+    #
+    #    Uses the `token` input. A push with the default `GITHUB_TOKEN` will not
+    #    retrigger the consumer's visual workflow, so the success comment says how
+    #    to kick it; TOKEN_IS_DEFAULT carries that fact in without the value.
+    #
+    #    On a FULL clear with a `check-name` configured, synthesize a passing
+    #    Check Run on the new SHA: the committed tree is byte-identical to the
+    #    captured run, so the rerun is provably redundant. Fail-closed on a
+    #    partial; a checks.create failure never fails the job.
     - name: Commit baselines to PR head branch
       id: commit
       if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true'
@@ -1085,23 +1021,12 @@ runs:
             body: ['<!-- tuffgal-approve -->', committed, ...partialNote, ...tail, ...checkNote].join('\n'),
           });
 
-    # ------------------------------------------------------------------ #
-    # 8. Final sticky-comment status. Runs after the commit step reached  #
-    #    a benign terminal state — either a real commit landed             #
-    #    (`committed`) or there was nothing to commit                      #
-    #    (`nothing_to_commit`). `always()` so a post-commit cosmetic       #
-    #    failure in the commit step (a failed reaction / success comment    #
-    #    AFTER the ref fast-forwarded, with `committed` already set) does   #
-    #    not suppress the success banner. Separate step — not folded into   #
-    #    the commit step — because it edits the sticky comment with the     #
-    #    DEFAULT `github.token`, whereas the commit step uses inputs.token. #
-    #                                                                     #
-    #    Full approve: STRIP the whole "Approve these changes" CTA         #
-    #    (approve-all box included) — nothing left to approve. Partial:     #
-    #    leave the (already-unticked) boxes in place. Sets `reported=true` #
-    #    so the failure step below stands down. Same untick + assert +     #
-    #    try/catch discipline.                                             #
-    # ------------------------------------------------------------------ #
+    # 8. Final status, after the commit step reached a benign terminal state.
+    #    `always()` so a post-commit cosmetic failure does not suppress the success
+    #    banner. A separate step because it edits with the DEFAULT token while the
+    #    commit step uses inputs.token. A full approve STRIPS the whole CTA;
+    #    a partial leaves its unticked boxes. Sets `reported=true` so the failure
+    #    step below stands down.
     - name: Finalize the sticky report comment status
       id: report_final
       if: always() && steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.report_status.outputs.comment_id != '' && (steps.commit.outputs.committed == 'true' || steps.commit.outputs.nothing_to_commit == 'true')
@@ -1237,23 +1162,11 @@ runs:
             core.warning(`Could not post final status to the sticky comment: ${error.message}`);
           }
 
-    # ------------------------------------------------------------------ #
-    # 9. Failure sticky-comment status. LAST step, `if: always()`. Fires   #
-    #    only when the gate proceeded, a sticky comment exists, AND the     #
-    #    final step above did NOT report a benign terminal state           #
-    #    (`report_final.outputs.reported != 'true'`) — i.e. the job failed  #
-    #    before/at the commit, or no candidates were found. In a composite  #
-    #    action a step is skipped once an earlier step fails UNLESS it       #
-    #    carries a status function, so `always()` is required to run this    #
-    #    after a hard failure; a skipped final step leaves `reported`        #
-    #    empty, so this fires exactly in the not-yet-reported cases. Never   #
-    #    double-posts over a success (report_final set `reported=true`).     #
-    #                                                                     #
-    #    Step 1b LOCKED every box for the duration, so this path unlocks     #
-    #    them — the retry the banner offers has to be clickable — and clears  #
-    #    any queued-request note. The untick alongside it is defense in       #
-    #    depth. Same DEFAULT-token + assert + try/catch discipline.           #
-    # ------------------------------------------------------------------ #
+    # 9. Failure status. LAST step, `always()` — in a composite, a step is skipped
+    #    once an earlier one fails unless it carries a status function. Fires only
+    #    when the final step did NOT report (`reported != 'true'`), so it can never
+    #    double-post over a success. Unlocks the boxes the in-flight step locked —
+    #    the retry it offers has to be clickable — and clears any queued note.
     - name: Report approval failure on the sticky report comment
       id: report_failure
       if: always() && steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.report_status.outputs.comment_id != '' && steps.report_final.outputs.reported != 'true'

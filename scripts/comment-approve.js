@@ -18,18 +18,11 @@ const { isA11yOnlyEntry } = require("./comment-a11y.js");
 // are pinned byte-equal by a test in filter-candidates.test.js.
 const ACTION_NAME_PATTERN = /^[a-z0-9-]+$/;
 
-// Per-item approve marker. Each Changed/New baseline entry gets its own GFM
-// task-list checkbox carrying this marker with the entry's candidate-tree
-// action keys embedded directly in the HTML comment — comma-joined, each key
-// matching `[a-z0-9-]+` so the join is unambiguous to split back apart. The
-// trigger parser (`resolve-approver.js`) regex-extracts `(marker keys) +
-// (ticked state)` per line straight from the comment body, with no external
-// index/lookup table. The `:` prefix keeps it distinct from the master
-// `<!-- tuffgal-approve-box -->` box so neither grep can match the other. Keys
-// are allowlist-filtered before the join (defense in depth, not trust in the
-// upstream `keysAt` caller), so a malformed key never reaches the comment; an
-// empty result renders an empty payload (`tuffgal-approve-item:`), never a
-// malformed marker.
+// Per-item approve marker: the entry's candidate-tree keys, comma-joined into an
+// HTML comment that `resolve-approver.js` regex-extracts straight back out. The
+// `:` prefix keeps it from matching the master box's grep. Keys are
+// allowlist-filtered before the join, so a malformed one never reaches the
+// comment; an empty result renders an empty payload, never a broken marker.
 const APPROVE_ITEM_MARKER_PREFIX = "tuffgal-approve-item:";
 const approveItemMarker = (actionKeys) =>
   `<!-- ${APPROVE_ITEM_MARKER_PREFIX}${(actionKeys || [])
@@ -50,24 +43,13 @@ const distinctBreakpoints = (shots) => {
   return out;
 };
 
-// One per-item approve checkbox line. Rendered as a top-level task-list item
-// (not nested inside the entry's `<details>`) on purpose: a checkbox toggled
-// inside a `<details>` bubbles its click to the collapsible and snaps it shut,
-// so the interactive box lives on its own line above the thumbnails.
+// One per-item approve checkbox line, deliberately OUTSIDE the entry's
+// `<details>`: a checkbox toggled inside one bubbles its click to the collapsible
+// and snaps it shut. Trailing suffixes are free text to the trigger parser, which
+// matches only the marker and the tick state.
 //
-// In multi-breakpoint mode a plain-text `(mobile, desktop)` suffix naming the
-// drifted breakpoints is appended AFTER the marker + tick-box. That suffix is
-// free text to `resolve-approver.js`'s `CHECKED_ITEM_BOX` regex, which matches
-// only the literal marker through its `-->` and the tick state — never trailing
-// text — so the suffix can never perturb which keys a ticked box approves.
-//
-// The approve action's `report-comment.js` `applyPartialApproval` also READS this
-// line on a partial approve: it detects an item box by the marker (the
-// load-bearing part), then relabels an approved one to
-// `- ✅ Approved **name** (suffix)`, keying the label off the ` Approve ` prefix +
-// the `**name**` wrapper rendered here. Keep this ` Approve **name**` prose +
-// suffix layout in step with that reader — the same cross-file read-dependency
-// precedent as resolve-approver.js reading the marker above.
+// approve-cta.js's `applyPartialApproval` READS this line, keying its relabel off
+// the ` Approve **name**` shape — keep the two in step.
 const approveItemCheckbox = (entry, multiBreakpoint) => {
   let line = `- [ ] ${approveItemMarker(entry.actionKeys)} Approve **${escapeHtml(
     entry.name
