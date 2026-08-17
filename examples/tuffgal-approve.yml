@@ -48,7 +48,7 @@ jobs:
     permissions:
       contents: write # commit baselines to the PR head branch
       pull-requests: write # react + reply on the comment
-      actions: read # download the candidates artifact from the PR run
+      actions: read # download the candidates artifact from the PR run, and check whether a run holding the approve lock is still alive
       checks: write # synthesize the passing required check on a full-clear approve (only if you set check-name)
     steps:
       - uses: nschneble/tuffgal-action/approve@v1

@@ -61,10 +61,12 @@ runs:
       id: gate
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
-        # This composite's own action dir, evaluated in the composite context (see
-        # the commit step's ACTION_PATH note). The script requires resolve-approver.js
-        # from here — NOT via GITHUB_ACTION_PATH, which inside a nested github-script
-        # step points at github-script's own dir.
+        # This composite's own action dir. `github.action_path` is only supported in
+        # composite actions and is evaluated HERE, in the composite's context; inside
+        # the nested github-script step below, `GITHUB_ACTION_PATH` points at
+        # github-script's OWN dir instead, so a module required through it resolves
+        # nowhere. Every step in this file passes the path through this env for that
+        # reason. (Source-locked by ci.yml approve-require-source-lock.)
         ACTION_PATH: ${{ github.action_path }}
       with:
         script: |
@@ -81,7 +83,7 @@ runs:
           // — lives in a committed, unit-tested module. The API-bound pieces
           // (reaction, permission lookup, fork decline) stay inline below. See
           // resolve-approver.js and the approve-scripts-unit CI job.
-          const { resolveApprover } = require(`${process.env.ACTION_PATH}/scripts/resolve-approver.js`);
+          const { resolveApprover, isAllowedPermission } = require(`${process.env.ACTION_PATH}/scripts/resolve-approver.js`);
           const { proceed, actor, reason, selection } = resolveApprover({
             eventName: context.eventName,
             action: context.payload.action,
@@ -96,7 +98,7 @@ runs:
             // it. 'no-trigger' is a non-PR comment or neither approve shape.
             core.info(reason === 'ignored-actor'
               ? `Ignoring edit by '${actor}'.`
-              : 'Comment is not a @tuffgal approve or a ticked approve box on a PR; nothing to do.');
+              : 'Comment is not a `@tuffgal approve` or a ticked approve box on a PR; nothing to do.');
             core.setOutput('proceed', 'false');
             return;
           }
@@ -121,8 +123,9 @@ runs:
           } catch (e) {
             core.warning(`Permission lookup failed for ${actor}: ${e.message}`);
           }
-          const allowed = ['admin', 'maintain', 'write'];
-          if (!allowed.includes(level)) {
+          // The allowlist itself is pure and unit-tested in resolve-approver.js —
+          // this step owns only the lookup that produces `level`.
+          if (!isAllowedPermission(level)) {
             core.warning(`${actor} has '${level}' permission; approval requires write or higher.`);
             await react('eyes');
             core.setOutput('proceed', 'false');
@@ -150,7 +153,6 @@ runs:
             return;
           }
 
-          // provides an immediate acknowledgement
           await react('eyes');
 
           core.setOutput('proceed', 'true');
@@ -192,17 +194,17 @@ runs:
       env:
         PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
         APPROVER: ${{ steps.gate.outputs.actor }}
-        # This composite's own action dir (see the commit step's ACTION_PATH note).
+        # This composite's own action dir (see the gate step's ACTION_PATH note).
         # The script requires report-comment.js from here.
         ACTION_PATH: ${{ github.action_path }}
       with:
         # DEFAULT token — see the loop-safety note above. Never inputs.token here.
         github-token: ${{ github.token }}
         script: |
-          const {
-            REPORT_MARKER, inFlightMarker, inFlightRunId, untickApproveBoxes,
-            lockApproveBoxes, withQueuedNote, withStatusBanner, hasTickedApproveMarker,
-          } = require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
+          const { REPORT_MARKER, untickApproveBoxes, withQueuedNote, withStatusBanner, hasTickedApproveMarker } =
+            require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
+          const { inFlightMarker, inFlightRunId, lockApproveBoxes, decideApproveLock } =
+            require(`${process.env.ACTION_PATH}/scripts/approve-lock.js`);
           const { owner, repo } = context.repo;
           const prNumber = Number(process.env.PR_NUMBER);
           const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
@@ -231,34 +233,59 @@ runs:
             // serializer (see examples/tuffgal-approve.yml); this is the
             // user-visible half, and the backstop when a request slips through the
             // window between two runs' comment reads.
-            // A run id in the marker that belongs to a run which has since
-            // completed (or that the API cannot find) is a STALE lock — a
-            // cancelled job never reaches its terminal step, and nothing else
-            // would ever clear it. Take the lock in that case instead of
-            // refusing every approval on this PR forever.
+            // Only the lookup lives here; decideApproveLock (approve-lock.js) owns
+            // which of its outcomes is a stale lock and which is a live one.
             const lockedBy = inFlightRunId(sticky.body);
-            let lockIsLive = lockedBy !== null && lockedBy !== String(context.runId);
-            if (lockIsLive) {
+            let otherRunStatus = null;
+            let lookupFailed = false;
+            if (lockedBy !== null && lockedBy !== String(context.runId)) {
               try {
                 const other = await github.rest.actions.getWorkflowRun({
                   owner, repo, run_id: Number(lockedBy),
                 });
-                lockIsLive = other.data.status !== 'completed';
+                otherRunStatus = other.data.status;
               } catch (error) {
-                core.info(`Could not read run ${lockedBy} holding the approve lock (${error.message}); treating it as stale.`);
-                lockIsLive = false;
+                // 404 is the cancelled/deleted-run case the stale path exists for.
+                if (error.status === 404) {
+                  core.info(`Run ${lockedBy} holding the approve lock no longer exists; treating the lock as stale.`);
+                } else {
+                  lookupFailed = true;
+                  core.warning(`Could not read run ${lockedBy} holding the approve lock (${error.message}); refusing rather than risk racing a live approval.`);
+                }
               }
             }
+            const { busy: lockIsLive, reason: lockReason } = decideApproveLock({
+              inFlightId: lockedBy,
+              runId: context.runId,
+              otherRunStatus,
+              lookupFailed,
+            });
+            core.info(`Approve lock: ${lockReason}`);
             if (lockIsLive) {
               core.setOutput('busy', 'true');
               const requester = process.env.APPROVER;
               const note = [
-                `> ⏳ **Another approval is already running** — this request${requester ? ` from @${requester}` : ''} was ignored. Re-tick a box or comment \`@tuffgal approve\` once the run above finishes.`,
+                `> ⏳ **Another approval is already running** — this request${requester ? ` from \`${requester}\`` : ''} was ignored. Re-tick a box or comment \`@tuffgal approve\` once the run above finishes.`,
               ];
+              // LOST-UPDATE WINDOW. GitHub's comment API has no ETag / If-Match, so
+              // every write here is last-writer-wins against a body read moments
+              // earlier. This write is the only one made by a job that does NOT own
+              // the lock, so it is the one that can do damage: composed from a
+              // stale read it would resurrect a finished run's in-flight marker and
+              // its locked (unclickable) boxes over that run's terminal write.
+              // Re-read immediately before writing and bail if the lock cleared in
+              // between — that shrinks the window to the round trip below without
+              // closing it. The consumer workflow's per-PR concurrency group is
+              // what actually closes it (see examples/tuffgal-approve.yml).
+              const fresh = await github.rest.issues.getComment({ owner, repo, comment_id: sticky.id });
+              if (inFlightRunId(fresh.data.body || '') !== lockedBy) {
+                core.notice('The approval holding the lock finished while this request was being refused; leaving the comment untouched.');
+                return;
+              }
               // Untick + lock even here: the box this request ticked is still
               // ticked in the body we just read (the other job locked its own
               // snapshot), and a written-back ticked marker would retrigger.
-              const busyBody = withQueuedNote(lockApproveBoxes(untickApproveBoxes(sticky.body)), note);
+              const busyBody = withQueuedNote(lockApproveBoxes(untickApproveBoxes(fresh.data.body || '')), note);
               if (hasTickedApproveMarker(busyBody)) {
                 core.warning('Refusing to write the busy note: outgoing body still carries a ticked approve marker.');
                 return;
@@ -268,9 +295,16 @@ runs:
               return;
             }
 
+            // A takeover says so. The boxes a cancelled run left inert are only
+            // recoverable by a typed `@tuffgal approve` (there is nothing left to
+            // click), so name what happened rather than silently reusing the lock.
+            const tookOver = lockedBy !== null && lockedBy !== String(context.runId);
             const banner = [
               inFlightMarker(context.runId),
               `> ⚙️ **Approving baselines** — fetching the approved candidates and committing them to this branch. This can take a few minutes.`,
+              ...(tookOver
+                ? [`>`, `> ↩️ Took over from run \`${lockedBy}\`, which ended without releasing the approve lock.`]
+                : []),
               `>`,
               `> [View the run →](${runUrl})`,
             ];
@@ -330,7 +364,7 @@ runs:
         HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
         PR_NUMBER: ${{ steps.gate.outputs.pr_number }}
         ARTIFACT_NAME: ${{ inputs.artifact-name }}
-        # This composite's own action dir (see the commit step's ACTION_PATH note).
+        # This composite's own action dir (see the gate step's ACTION_PATH note).
         # The script requires select-candidate.js from here.
         ACTION_PATH: ${{ github.action_path }}
       with:
@@ -467,7 +501,7 @@ runs:
       env:
         CAND_DIR: ${{ steps.extract.outputs.cand_dir }}
         SELECTION: ${{ steps.gate.outputs.selection }}
-        # This composite's own action dir (see the commit step's ACTION_PATH note).
+        # This composite's own action dir (see the gate step's ACTION_PATH note).
         # The script requires filter-candidates.js from here.
         ACTION_PATH: ${{ github.action_path }}
       with:
@@ -513,10 +547,8 @@ runs:
           // artifact" step). Deletions are NOT candidate action-dirs, so they never
           // appear in presentDirNames / `total` above — yet `tuffgal approve
           // --prune` resolves them UNCONDITIONALLY on any approve trigger (they are
-          // never gated by the per-item selection). The commit step folds this into
-          // BOTH the kept and pending totals the check-shortcut gate consumes, so a
-          // deletion-only full clear (0 candidate dirs, N deletions) still earns the
-          // shortcut and the count cancels out on a partial. Prefer the authoritative
+          // never gated by the per-item selection), so the commit step folds this
+          // count into both of the check-shortcut gate's totals. Prefer the authoritative
           // `.totals.deleted`; fall back to the `.deleted` array length. Defaults to
           // 0 (fail-safe: a deletion-only run simply doesn't get the shortcut) if the
           // bundled results.json is missing or unreadable.
@@ -565,19 +597,19 @@ runs:
     # ------------------------------------------------------------------ #
     - name: Update sticky report comment with the fetched-candidates milestone
       id: report_milestone
-      if: steps.gate.outputs.proceed == 'true' && steps.download.outputs.found == 'true' && steps.report_status.outputs.comment_id != ''
+      if: steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.download.outputs.found == 'true' && steps.report_status.outputs.comment_id != ''
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         COMMENT_ID: ${{ steps.report_status.outputs.comment_id }}
-        # This composite's own action dir (see the commit step's ACTION_PATH note).
+        # This composite's own action dir (see the gate step's ACTION_PATH note).
         # The script requires report-comment.js from here.
         ACTION_PATH: ${{ github.action_path }}
       with:
         # DEFAULT token — GITHUB_TOKEN comment edits never fire workflow events.
         github-token: ${{ github.token }}
         script: |
-          const { inFlightMarker, untickApproveBoxes, lockApproveBoxes, withStatusBanner, hasTickedApproveMarker } =
-            require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
+          const { untickApproveBoxes, withStatusBanner, hasTickedApproveMarker } = require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
+          const { inFlightMarker, lockApproveBoxes } = require(`${process.env.ACTION_PATH}/scripts/approve-lock.js`);
           const { owner, repo } = context.repo;
           const commentId = Number(process.env.COMMENT_ID);
           const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
@@ -764,22 +796,15 @@ runs:
         IS_PARTIAL: ${{ steps.filter.outputs.partial }}
         PROMOTED_COUNT: ${{ steps.filter.outputs.kept }}
         CANDIDATE_COUNT: ${{ steps.filter.outputs.total }}
-        # The run's deleted-baseline count (from the bundled results.json). Deletions
-        # always resolve on any approve trigger (`--prune` is unconditional), so the
-        # script folds this into BOTH keptCount and pendingTotal below — letting a
-        # deletion-only full clear earn the shortcut while cancelling out on a partial.
+        # The run's deleted-baseline count (from the bundled results.json); see
+        # foldDeletions in check-shortcut.js for why both totals carry it.
         DELETED_COUNT: ${{ steps.filter.outputs.deleted }}
         # Required-check name(s) to synthesize as passing on a full-clear approval
         # (empty disables the shortcut). Read via env — a nested github-script step
         # cannot read inputs.* directly. PROMOTED_COUNT / CANDIDATE_COUNT above are
         # the keptCount / pendingTotal the shortcut's full-clear gate consumes.
         CHECK_NAME: ${{ inputs.check-name }}
-        # This composite's own action dir. `github.action_path` is only supported
-        # in composite actions and is evaluated HERE in the composite's context;
-        # it is NOT the same as `GITHUB_ACTION_PATH` inside the nested github-
-        # script step below, which points at github-script's own action dir.
-        # The script requires baseline-tree.js from this path. (Source-locked by
-        # ci.yml approve-require-source-lock.)
+        # This composite's own action dir (see the gate step's ACTION_PATH note).
         ACTION_PATH: ${{ github.action_path }}
       with:
         github-token: ${{ inputs.token }}
@@ -895,13 +920,10 @@ runs:
           // Compute the full-clear decision UP FRONT so the SAME boolean gates
           // both the commit-message trailer (below) and the check-synthesis block
           // further down. These read only already-available env counts, never the
-          // commit result. Deletions always resolve on any approve trigger
-          // (`--prune` is unconditional), so the run's deleted count is folded into
-          // BOTH keptCount and pendingTotal: it cancels out in the strict-equality
-          // gate (can never flip a partial into a full clear) and rescues the
-          // deletion-only full clear where the candidate-dir count is 0.
-          // Number('') === 0, so a missing DELETED_COUNT degrades fail-safe; env
-          // counts are strings and the module fail-closes NaN / non-integer input.
+          // commit result. foldDeletions (check-shortcut.js) owns why the deleted
+          // count rides in both totals. Number('') === 0, so a missing
+          // DELETED_COUNT degrades fail-safe; env counts are strings and the
+          // module fail-closes NaN / non-integer input.
           const checkNames = parseCheckNames(process.env.CHECK_NAME);
           const deletedCount = Number(process.env.DELETED_COUNT);
           const { pendingTotal, keptCount } = foldDeletions({
@@ -917,9 +939,8 @@ runs:
           // greps for this exact literal (HAND-DUPLICATED cross-package contract;
           // ci.yml approve-trailer-source-lock pins the two copies byte-equal) and,
           // on the consumer's next same-repo push, skips re-running the
-          // byte-identical suite — closing the PAT-token rerun gap the
-          // GITHUB_TOKEN-only #31 check-synthesis shortcut never covered. A partial
-          // approve keeps today's exact single-line message, byte-for-byte.
+          // byte-identical suite — the PAT-token path check synthesis does not
+          // cover. A partial approve keeps the plain single-line message.
           const message = fullClear
             ? `chore(tuffgal): approve candidate baselines\n\nTuffgal-Full-Approval: ${headSha}`
             : 'chore(tuffgal): approve candidate baselines';
@@ -1083,7 +1104,7 @@ runs:
     # ------------------------------------------------------------------ #
     - name: Finalize the sticky report comment status
       id: report_final
-      if: always() && steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.comment_id != '' && (steps.commit.outputs.committed == 'true' || steps.commit.outputs.nothing_to_commit == 'true')
+      if: always() && steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.report_status.outputs.comment_id != '' && (steps.commit.outputs.committed == 'true' || steps.commit.outputs.nothing_to_commit == 'true')
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         COMMENT_ID: ${{ steps.report_status.outputs.comment_id }}
@@ -1105,17 +1126,17 @@ runs:
         # reaches the environment. Drives the retrigger tail (default token = the
         # check won't re-run on its own; custom token = it re-runs / short-circuits).
         TOKEN_IS_DEFAULT: ${{ inputs.token == github.token }}
-        # This composite's own action dir (see the commit step's ACTION_PATH note).
+        # This composite's own action dir (see the gate step's ACTION_PATH note).
         # The script requires report-comment.js from here.
         ACTION_PATH: ${{ github.action_path }}
       with:
         # DEFAULT token — GITHUB_TOKEN comment edits never fire workflow events.
         github-token: ${{ github.token }}
         script: |
-          const {
-            untickApproveBoxes, unlockApproveBoxes, clearQueuedNote, withStatusBanner,
-            stripApproveCta, applyPartialApproval, hasTickedApproveMarker,
-          } = require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
+          const { untickApproveBoxes, clearQueuedNote, withStatusBanner, hasTickedApproveMarker } =
+            require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
+          const { unlockApproveBoxes } = require(`${process.env.ACTION_PATH}/scripts/approve-lock.js`);
+          const { stripApproveCta, applyPartialApproval } = require(`${process.env.ACTION_PATH}/scripts/approve-cta.js`);
           const { owner, repo } = context.repo;
           const commentId = Number(process.env.COMMENT_ID);
           const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
@@ -1235,19 +1256,20 @@ runs:
     # ------------------------------------------------------------------ #
     - name: Report approval failure on the sticky report comment
       id: report_failure
-      if: always() && steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.comment_id != '' && steps.report_final.outputs.reported != 'true'
+      if: always() && steps.gate.outputs.proceed == 'true' && steps.report_status.outputs.busy != 'true' && steps.report_status.outputs.comment_id != '' && steps.report_final.outputs.reported != 'true'
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         COMMENT_ID: ${{ steps.report_status.outputs.comment_id }}
-        # This composite's own action dir (see the commit step's ACTION_PATH note).
+        # This composite's own action dir (see the gate step's ACTION_PATH note).
         # The script requires report-comment.js from here.
         ACTION_PATH: ${{ github.action_path }}
       with:
         # DEFAULT token — GITHUB_TOKEN comment edits never fire workflow events.
         github-token: ${{ github.token }}
         script: |
-          const { untickApproveBoxes, unlockApproveBoxes, clearQueuedNote, withStatusBanner, hasTickedApproveMarker } =
+          const { untickApproveBoxes, clearQueuedNote, withStatusBanner, hasTickedApproveMarker } =
             require(`${process.env.ACTION_PATH}/scripts/report-comment.js`);
+          const { unlockApproveBoxes } = require(`${process.env.ACTION_PATH}/scripts/approve-lock.js`);
           const { owner, repo } = context.repo;
           const commentId = Number(process.env.COMMENT_ID);
           const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;

@@ -37,7 +37,7 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/myapp_testing_ui
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: nschneble/tuffgal-action@v1
         with:
           setup-script: test:ui:setup

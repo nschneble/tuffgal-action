@@ -21,6 +21,15 @@ images are identical but there are structural changes underneath the hood.
   sticky PR comment can trigger a second approval
 - A `@tuffgal approve` that lands mid-approval is refused with a note under
   the status banner, cleared when the running approval finishes
+- The example approve workflow serializes per PR with a `concurrency`
+  group, so copy it to your workflow to keep two approvals off the same
+  branch (the in-comment lock is the user-visible half)
+
+### Fixed
+
+- A story with both new and changed baselines only shows up as new, so the
+  changed candidates cannot be approved from the sticky PR comment
+- The artifact validator reports success for any zip file it cannot read
 
 ## [v1.6.0] - 2026-07-28
 

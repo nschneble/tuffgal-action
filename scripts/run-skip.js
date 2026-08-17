@@ -10,9 +10,9 @@
 // commit is provably that redundant full-approval commit, so the main action can
 // emit a fast `outcome=pass` instead of re-running Playwright.
 //
-// The v1.5.0 #31 shortcut (approve/scripts/check-shortcut.js) only ever helped
+// The check-synthesis shortcut (approve/scripts/check-shortcut.js) only helps
 // the default-`GITHUB_TOKEN` path, where the push fires no workflow at all so
-// there is nothing to skip. This module closes the PAT-token gap. Both can fire
+// there is nothing to skip. This module covers the PAT-token path. Both can fire
 // on the same approval under a PAT + a configured check-name — the synthesized
 // check plus this real-but-instant short-circuited run, both green.
 //

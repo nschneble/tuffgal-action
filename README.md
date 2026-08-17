@@ -55,7 +55,7 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/myapp_testing_ui
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: nschneble/tuffgal-action@v1
         with:
           setup-script: test:ui:setup
@@ -155,7 +155,7 @@ reproduce the same result. Anything ambiguous (a fork PR, a merge commit, a
 commit that also touches source, an API error) falls through to the normal run
 below. Otherwise:
 
-1. `actions/setup-node@v4` with the requested Node version and npm cache
+1. `actions/setup-node` with the requested Node version and npm cache
 2. `npm ci` in `working-directory`
 3. `npx playwright install --with-deps chromium` (unless `install-browsers: false`)
 4. `npm run <setup-script>` if `setup-script` is provided (skipped otherwise)
@@ -163,7 +163,7 @@ below. Otherwise:
 6. Parse `<report-path>/results.json` for `totals.{passed,changed,new,deleted,failed,stories}` and `environment.mismatch`, then write outputs + a `$GITHUB_STEP_SUMMARY` table
 7. Copy `results.json` into `<report-path>/candidates/` so the candidates artifact is self-contained for `tuffgal approve --from`
 8. Upload `<report-path>/` as `tuffgal-report` (on failures, no-results, or pending changes) and `<report-path>/candidates/` as `tuffgal-candidates` (when visual changes await review)
-9. On a PR with pending changes (and `pages-preview: true`), publish `<report-path>/` + `<baselines-path>/` to the `gh-pages` branch under `pr-<n>/`, so the report and every PNG have a real URL (best-effort — a failure just leaves the comment on the artifact-download path)
+9. On a PR with pending changes (and `pages-preview: true`), publish `<report-path>/` + `<baselines-path>/` to the `pages-branch` (`gh-pages` by default) under `pr-<n>/`, so the report and every PNG have a real URL (best-effort — a failure just leaves the comment on the artifact-download path)
 10. On a PR event, upsert a sticky comment (marker `<!-- tuffgal-report -->`) with the totals and, when a preview published, per-changed-story inline side-by-side baseline/actual thumbnails + an **Open in report →** deep-link, a **Failed** section listing each broken story (with its failure message and a report deep-link), and a report link on the **Deleted** section; otherwise the plain story names + artifact-download instructions. When a run spans more than one breakpoint, the Changed/New thumbnails become a per-breakpoint table (one row per drifted breakpoint) and the Deleted, Failed, and per-story approve-checkbox lines name which breakpoints drifted; a single-breakpoint run renders exactly as before. A story that drifted only in its accessibility snapshot (pixels matched) skips the thumbnails entirely — its baseline and actual PNGs are identical — and renders the `a11y.yaml` line diff instead, with or without a preview; its approve checkbox is marked **a11y only**. Includes an environment-mismatch banner when set, an approve checkbox + `@tuffgal approve` command, and a link to the run
 11. Re-surface a non-zero exit when `outcome` is `failed`, `no-results`, `env-mismatch`, or `changed` (when `fail-on-changed: true`)
 
@@ -207,6 +207,9 @@ the bot edits that same comment in place as the run progresses:
   fetching the approved candidates and committing them…_
 - **📦 Milestone** — once the candidates are fetched and filtered: _committing
   the approved baselines…_
+- **✅ Already up to date** — when the approved baselines already match the
+  branch, so no new commit was needed. The approve section is resolved exactly as
+  a landed approval resolves it.
 - **✅ Final** — after the commit lands. A full approval reports _All baselines
   approved and committed as `<sha>`_ and removes the now-pointless approve
   checkbox; a partial approval reports _Promoted N of M candidate baselines_,
@@ -228,9 +231,15 @@ box is swapped for an inert **⏳** line (its hidden marker kept, so the swap is
 reversed at the end), and the top-level box says _Locked while an approval runs_.
 A `@tuffgal approve` typed during that window is refused with a note under the
 banner naming the ignored request, and the running approval clears that note when
-it finishes. The lock is stamped with the running job's id, so an approval that is
-cancelled mid-run never leaves the boxes stuck: the next request sees the owning
-run is no longer active and takes over.
+it finishes.
+
+The lock is stamped with the running job's id. Every terminal state — success,
+already-up-to-date, failure — unlocks the boxes, but a **cancelled** run reaches
+none of them, so its boxes stay inert. Recovery is a typed `@tuffgal approve`:
+that request checks the owning run, finds it is no longer active, takes the lock
+over (saying so in the banner), and unlocks the boxes when it finishes. There is
+nothing left to click in that state, which is why the comment path cannot recover
+it on its own.
 
 The real serializer is the per-PR `concurrency` group in the example approve
 workflow (`cancel-in-progress: false`), which queues a second request behind the
@@ -271,10 +280,17 @@ jobs:
           contains(github.event.comment.body, '[X] <!-- tuffgal-approve-item:')))
       )
     runs-on: ubuntu-latest
+    # Serialize approvals per PR: a second request queues behind the one in
+    # flight instead of racing it to the same branch. Never cancel — a run killed
+    # between the commit and its final comment update strands the sticky comment
+    # on a progress banner.
+    concurrency:
+      group: tuffgal-approve-${{ github.event.issue.number }}
+      cancel-in-progress: false
     permissions:
       contents: write # commit baselines to the PR head branch
       pull-requests: write # react + reply on the comment
-      actions: read # download the candidates artifact from the PR run
+      actions: read # download the candidates artifact from the PR run, and check whether a run holding the approve lock is still alive
       checks: write # synthesize the passing required check on a full-clear approve (only if you set check-name)
     steps:
       - uses: nschneble/tuffgal-action/approve@v1
@@ -291,9 +307,24 @@ jobs:
 
 (Also available at [`examples/tuffgal-approve.yml`](examples/tuffgal-approve.yml).)
 
-If a single workflow run uploads more than one visual job's candidates,
-give each job a unique `upload-artifact` name and set the matching
-`artifact-name` here so approve knows which candidate set to promote.
+### Approve inputs
+
+| Name                | Default                                    | Description                                                                                                                                                                             |
+| ------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `artifact-name`     | `tuffgal-candidates`                       | Candidates artifact to promote. Set a unique name per visual job for matrix / smoke suites; a run carrying more than one artifact with this name fails closed                            |
+| `baselines-path`    | `tuffgal/baselines`                        | Baselines directory (must match `paths.baselines`). Commits are strictly scoped to it                                                                                                   |
+| `check-name`        | `''`                                       | Required status check(s) to synthesize as passing on a full-clear approve, comma-separated. Empty disables it. Needs `checks: write`                                                     |
+| `git-user-email`    | `tuffgal-bot@users.noreply.github.com`     | Email for the baseline commit author/committer                                                                                                                                          |
+| `git-user-name`     | `tuffgal[bot]`                             | Name for the baseline commit author/committer                                                                                                                                           |
+| `node-version`      | `22`                                       | Node.js version (Tuffgal requires Node 22+)                                                                                                                                             |
+| `token`             | `${{ github.token }}`                      | Token for the baseline commit and `updateRef`. The default `GITHUB_TOKEN` will not retrigger the visual check; a PAT / App token will                                                    |
+| `working-directory` | `.`                                        | Directory containing `tuffgal.config.ts` and `package.json`                                                                                                                             |
+
+If a single workflow run uploads more than one visual job's candidates, each
+job needs its own artifact name — set `upload-artifacts: false` on the main
+action and upload `<report-path>/candidates/` yourself under a per-job name,
+then set the matching `artifact-name` here so approve knows which candidate set
+to promote.
 Approve fails closed when the selected run carries more than one artifact
 with this name rather than promoting an arbitrary set.
 

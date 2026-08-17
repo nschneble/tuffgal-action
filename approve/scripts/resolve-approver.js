@@ -107,4 +107,19 @@ function resolveApprover({ eventName, action, comment, issue, contextActor }) {
   return { proceed: true, actor, via: isMention ? 'mention' : 'checkbox', reason: null, selection };
 }
 
-module.exports = { resolveApprover };
+// Repository permission levels that may approve baselines. `admin` / `maintain` /
+// `write` can already push to the branch the approval commits to, so the gate
+// grants nothing they lack; `read`, `none`, and anything unrecognized (including
+// the `undefined` a FAILED permission lookup leaves behind) are refused.
+//
+// FAIL CLOSED. The caller in action.yml starts from `level = 'none'` and only
+// overwrites it on a successful lookup, so an API error keeps the refusal. This
+// predicate is the second half of that contract: it answers only "yes" for the
+// three levels named here, never "not obviously bad".
+const APPROVE_PERMISSIONS = ['admin', 'maintain', 'write'];
+
+function isAllowedPermission(level) {
+  return APPROVE_PERMISSIONS.includes(String(level == null ? '' : level));
+}
+
+module.exports = { resolveApprover, APPROVE_PERMISSIONS, isAllowedPermission };

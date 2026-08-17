@@ -204,3 +204,29 @@ test('ACTION_NAME_PATTERN accepts real action keys and rejects the spoof shapes'
   assert.ok(!ACTION_NAME_PATTERN.test('results.json'));
   assert.ok(!ACTION_NAME_PATTERN.test(''));
 });
+
+// --- cross-package pin: the action-key allowlist ---------------------------- //
+
+// ACTION_NAME_PATTERN is HAND-DUPLICATED between this module (the delete side)
+// and scripts/build-comment.js (the render side, which scripts/build-stories.js
+// filters with). The two packages cannot cross-require at runtime, but a test
+// runs against the whole checkout — so the copies are pinned to each other here,
+// the same way report-comment.test.js pins REPORT_MARKER to build-comment.js's
+// MARKER. Without this, one side could widen and the other stay narrow.
+const { ACTION_NAME_PATTERN: RENDER_SIDE_PATTERN } = require('../../scripts/build-comment.js');
+
+test('ACTION_NAME_PATTERN is byte-identical to build-comment.js\'s copy', () => {
+  assert.strictEqual(String(ACTION_NAME_PATTERN), String(RENDER_SIDE_PATTERN));
+  assert.strictEqual(String(ACTION_NAME_PATTERN), '/^[a-z0-9-]+$/');
+});
+
+test('both copies agree on the same keys, valid and malformed', () => {
+  for (const key of ['visit-home', 'a', 'x-1']) {
+    assert.strictEqual(ACTION_NAME_PATTERN.test(key), true);
+    assert.strictEqual(RENDER_SIDE_PATTERN.test(key), true);
+  }
+  for (const key of ['Visit-Home', '../escape', 'a_b', '', 'a b', 'a/b']) {
+    assert.strictEqual(ACTION_NAME_PATTERN.test(key), false, `${key} must be refused`);
+    assert.strictEqual(RENDER_SIDE_PATTERN.test(key), false, `${key} must be refused`);
+  }
+});

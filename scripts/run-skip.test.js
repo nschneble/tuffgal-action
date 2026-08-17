@@ -61,23 +61,6 @@ test("a subdirectory working-directory full approval skips", () => {
   assert.strictEqual(result.skip, true);
 });
 
-// Exercises the READER's regex against a well-formed, spelled-out trailer line
-// (the literal `Tuffgal-Full-Approval: <sha>`, NOT reconstructed from the TRAILER
-// constant) — a reader-side regression guard for run-skip.js's own TRAILER
-// constant and TRAILER_RE regex. It does NOT and cannot verify writer/reader
-// cross-file sync: this repo's two action packages can't cross-require, so this
-// test has no runtime link to approve/action.yml's copy and could never detect a
-// drift there. That cross-file job belongs to ci.yml's approve-trailer-source-lock,
-// which now pins the load-bearing colon+space shape on BOTH sides. (An earlier
-// version of this test claimed to catch writer drift — including a "dropped blank
-// line" — but both claims were false: it has no writer link, and the blank line
-// isn't load-bearing anyway; see the m-flag case just below.)
-test("the reader's regex matches a well-formed full-approval trailer line", () => {
-  const message = `chore(tuffgal): approve candidate baselines\n\nTuffgal-Full-Approval: ${SHA}`;
-  const result = decideRunSkip(valid({ message }));
-  assert.strictEqual(result.skip, true);
-});
-
 // The blank line before the trailer is NOT load-bearing: TRAILER_RE carries the
 // `m` flag and anchors `^` at every line start, so a lone `\n` (no blank line)
 // before the trailer still lands it at a line start and still matches. Pins that

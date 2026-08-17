@@ -1307,3 +1307,42 @@ test("a pixel-drifted changed story is unaffected by the a11y-only branch", () =
   assert.ok(!body.includes("```diff"));
   assert.ok(!body.includes("a11y only"));
 });
+
+test("a diff line carrying a newline cannot break out of its fenced block", () => {
+  // tuffgal's payload is one entry per line, but the comment is markdown: a line
+  // smuggling its own newline plus a fence would otherwise close the block early
+  // and let raw HTML through. The fence grows past the longest backtick RUN,
+  // which is measured across the whole entry, newline included.
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "changed",
+    counts: { ...base().counts, changed: "1", total: "4" },
+    changed: [
+      a11yEntry(
+        a11yShot({
+          a11yDiff: {
+            lines: ['+  - text "a\n```\n<img src=x onerror=alert(1)>"'],
+            added: 1,
+            removed: 0,
+            truncated: false,
+          },
+        })
+      ),
+    ],
+  });
+  const fence = "`".repeat(4);
+  assert.ok(body.includes(`${fence}diff`), "the fence grew past the embedded run");
+  // Everything between the opening and closing fence is inert; nothing after the
+  // embedded newline escapes into the surrounding markdown.
+  const opened = body.split(`${fence}diff\n`)[1];
+  const inside = opened.split(`\n${fence}`)[0];
+  assert.ok(inside.includes("<img src=x onerror=alert(1)>"), "payload stays inside the fence");
+  // The embedded 3-backtick run sits INSIDE the block: the block's own closing
+  // fence is the 4-backtick one after the payload, not the smuggled one.
+  assert.ok(inside.includes("```"), "the smuggled fence is inert content");
+  assert.strictEqual(
+    body.indexOf(`\n${fence}\n`) > body.indexOf("<img src=x"),
+    true,
+    "the block closes after the payload, not before it"
+  );
+});

@@ -4,9 +4,8 @@
 // step: ordering the PR head's completed runs newest-first and, WITHIN a run,
 // deciding whether its artifacts yield a single promotable candidate, an
 // ambiguous set, or nothing. Extracted out of the inline `actions/github-script`
-// block so the #14 fail-closed selection fix can be exercised by a `node --test`
-// suite without a live GitHub run — the same extract-and-unit-test precedent set
-// by the sibling `validate-artifact.sh` and `baseline-tree.js`.
+// block so the fail-closed selection can be exercised by a `node --test` suite
+// without a live GitHub run. The API side stays inline.
 //
 // This module owns ONLY the pure decision. The `github.paginate` calls that
 // fetch runs + per-run artifacts, and the createComment / setFailed side effects,
@@ -15,7 +14,7 @@
 // module never performs I/O, so that laziness (and its API-call profile) is
 // preserved: the inline loop classifies one already-fetched run at a time.
 //
-// FAIL-CLOSED (the #14 fix): ambiguity WITHIN the selected run — a matrix / smoke
+// FAIL-CLOSED: ambiguity WITHIN the selected run — a matrix / smoke
 // suite that uploads multiple same-named artifacts — is an error, not a coin
 // flip. Promoting an arbitrary set could ship the wrong baselines, so it fails
 // closed rather than picking one.

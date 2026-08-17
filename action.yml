@@ -116,17 +116,12 @@ outputs:
 runs:
   using: composite
   steps:
-    # Fast full-approval short-circuit. When a baseline approval is pushed to the
-    # PR branch with a custom PAT / App token, GitHub retriggers this workflow and
-    # the whole suite would rerun against a tree byte-identical to the one just
-    # approved. Inspect the head commit ONCE (getCommit returns its message,
-    # parents, and up to 300 changed files): if it is a same-repo full-approval
-    # commit — the Tuffgal-Full-Approval trailer, a single matching parent, and a
-    # baselines-only diff — skip the expensive steps and emit a fast pass. The
-    # pure, security-sensitive decision lives in scripts/run-skip.js; every
-    # ambiguous / malformed / API-error case fails SAFE (skip='false' -> the full
-    # suite runs as today). Only fires on a pull_request event; on any other event
-    # this step is skipped and its empty `skip` output leaves all steps running.
+    # Fast full-approval short-circuit. getCommit is called ONCE (it returns the
+    # message, parents, and up to 300 changed files — everything the decision
+    # needs). The security-sensitive decision itself lives in scripts/run-skip.js,
+    # where every ambiguous / malformed / API-error case fails SAFE to a full run.
+    # A non-pull_request event skips this step, and its empty `skip` output leaves
+    # every later step running.
     - name: Skip the suite when this commit only promotes approved baselines
       id: shortcut
       if: github.event_name == 'pull_request'
@@ -420,20 +415,13 @@ runs:
         path: ${{ inputs.working-directory }}/${{ inputs.report-path }}/candidates/
         retention-days: ${{ inputs.retention-days }}
 
-    # Publish a per-PR Pages preview so the comment can link straight to the
-    # report + individual PNGs instead of a zip. The report references baselines
-    # as `../baselines/…`, so both trees are staged as siblings under `pr-<n>/`
-    # (report/ + baselines/) to keep those relative image srcs resolving exactly
-    # as they do locally. Concurrent visual runs on DIFFERENT PRs share this one
-    # branch; each replaces only its own `pr-<n>/` subtree, so a second push
-    # rejected non-fast-forward just needs the advanced tip re-synced and this
-    # PR's (idempotent) subtree re-applied — the push is retried a couple of
-    # times before falling back. Best-effort: a recognized not-configured state
-    # (no contents:write, Pages off, private repo) logs a notice, while an
-    # unexpected git/API failure logs a warning; either way preview-url is left
-    # empty and the comment falls back to artifact-download links. The push
-    # token is masked (core.setSecret) and redacted from error logs so a custom
-    # pages-token can't leak in cleartext. Never fails the job.
+    # The report references baselines as `../baselines/…`, so both trees are
+    # staged as SIBLINGS under `pr-<n>/` to keep those relative image srcs
+    # resolving as they do locally. Concurrent runs on different PRs share the
+    # branch and each replaces only its own subtree, so a non-fast-forward
+    # rejection just needs a re-sync + retry (see pages-push.js). The push token
+    # is masked and redacted from error logs so a custom pages-token can't leak.
+    # Best-effort throughout: never fails the job.
     - name: Publish per-PR preview to GitHub Pages
       id: pages
       if: always() && github.event_name == 'pull_request' && inputs.pages-preview == 'true' && steps.outcome.outputs.pending == 'true'
@@ -666,6 +654,7 @@ runs:
           // Nested github-script step: require via the composite's ACTION_PATH
           // (passed through this step's env above), never bare GITHUB_ACTION_PATH.
           const { MARKER, buildCommentBody } = require(`${process.env.ACTION_PATH}/scripts/build-comment.js`);
+          const { buildStories } = require(`${process.env.ACTION_PATH}/scripts/build-stories.js`);
 
           const wd = process.env.TUFFGAL_WORKING_DIRECTORY || '.';
           const reportPath = process.env.TUFFGAL_REPORT_PATH || 'tuffgal/report';
@@ -690,126 +679,26 @@ runs:
           // degrades to the plain name list + artifact-download flow below.
           const previewUrl = (process.env.PREVIEW_URL || '').replace(/\/$/, '');
           const baselinesPath = process.env.TUFFGAL_BASELINES_PATH || 'tuffgal/baselines';
-          const reportAbs = path.resolve(wd, reportPath);
-          const baselinesAbs = path.resolve(wd, baselinesPath);
-          // Map an absolute results.json image path to its preview URL. The
-          // preview stages report-path under `pr-<n>/report` and baselines-path
-          // under `pr-<n>/baselines`, so relativize against whichever root the
-          // path lives under. Returns null for a path under neither (or no
-          // preview), so callers just skip that image.
-          const toPreviewUrl = (abs) => {
-            if (!previewUrl || !abs) return null;
-            const r = path.resolve(abs);
-            const under = (root) => r === root || r.startsWith(root + path.sep);
-            if (under(reportAbs)) return `${previewUrl}/report/${path.relative(reportAbs, r).split(path.sep).join('/')}`;
-            if (under(baselinesAbs)) return `${previewUrl}/baselines/${path.relative(baselinesAbs, r).split(path.sep).join('/')}`;
-            return null;
-          };
 
           // Story names + per-story image URLs are a best-effort convenience read
           // from results.json; the counts above (from the parse step) are the
-          // authoritative source. `index` is the story's position in the stories
-          // array — the SAME ordinal template.ts renders as `id="story-<index>"`,
-          // so `#story-<index>` deep-links land on the right story.
-          let changed = [], added = [], deleted = [], failed = [], mismatchKeys = [], multiBreakpoint = false;
+          // authoritative source. The read is API-side; the bucketing, key
+          // allowlist, a11y-only discriminator, and preview-URL resolution are
+          // pure and unit-tested in build-stories.js.
+          let stories = { changed: [], added: [], deleted: [], failed: [], multiBreakpoint: false, mismatchKeys: [] };
           if (!shortCircuited) try {
-            const r = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
-            // Distinct, non-empty breakpoint names this run captured at, across
-            // every story action AND every deleted-baseline record. More than one
-            // -> multi-breakpoint mode (per-breakpoint detail rows + labels). A
-            // run with a single breakpoint, or a legacy artifact whose actions
-            // carry no `breakpoint`, stays single-breakpoint and renders exactly
-            // as before.
-            const breakpointNames = new Set();
-            (r.stories || []).forEach(s => (s.actions || []).forEach(a => {
-              if (a && a.breakpoint) breakpointNames.add(a.breakpoint);
-            }));
-            (r.deleted || []).forEach(d => {
-              if (d && typeof d === 'object' && d.breakpoint) breakpointNames.add(d.breakpoint);
+            stories = buildStories({
+              result: JSON.parse(fs.readFileSync(resultsFile, 'utf8')),
+              previewUrl,
+              reportAbs: path.resolve(wd, reportPath),
+              baselinesAbs: path.resolve(wd, baselinesPath),
             });
-            multiBreakpoint = breakpointNames.size > 1;
-            (r.stories || []).forEach((s, index) => {
-              const actions = s.actions || [];
-              const statuses = [s.status].concat(actions.map(a => a.status));
-              // ALL of this story's candidate-tree action keys at the bucket's
-              // status: a story can carry several actions, and `tuffgal approve`
-              // selects by these `.action` directory keys, so the per-item
-              // approve checkbox must carry every matching one (not just the
-              // representative shot rendered in the preview). Deduped: the same
-              // action runs once PER breakpoint, so a multi-breakpoint story
-              // yields the same `.action` key N times — the marker carries each
-              // distinct key once (resolve-approver Set-dedupes on read anyway,
-              // but the rendered marker should not repeat a key).
-              // Allowlist-filter the keys on this WRITE side too (defense in
-              // depth, symmetric with the read side in resolve-approver.js and the
-              // delete side in filter-candidates.js), so a malformed action key
-              // never even reaches the rendered per-item approve marker. The
-              // pattern is the tuffgal CLI's own action-key allowlist, inlined
-              // here (this github-script block can't require the extracted module).
-              const keysAt = (want) =>
-                [...new Set(
-                  actions.filter(a => a.status === want).map(a => a.action)
-                    .filter(key => typeof key === 'string' && /^[a-z0-9-]+$/.test(key))
-                )];
-              // One shot per action that actually drifted at the bucket's status,
-              // each tagged with its breakpoint so the multi-breakpoint renderer
-              // shows one detail row per breakpoint. Single-breakpoint mode reads
-              // shots[0] only, matching the prior representative-shot pick (the
-              // first action at that status). Changed carries baseline + actual;
-              // new carries actual only (no prior baseline exists yet).
-              // A changed shot also carries whether it drifted in the
-              // accessibility tree ALONE (pixels matched), plus that run's
-              // rendered `a11yDiff` — the comment shows the diff instead of two
-              // identical thumbnails. The a11y-only test is the positive
-              // `a11yChanged === true` + no `diffPath` pair from the tuffgal
-              // schema; a size-mismatch row also lacks a diffPath but never sets
-              // a11yChanged, so the two never collide. `a11yDiff` is absent on
-              // results from a tuffgal that predates the field; the builder
-              // degrades to naming the drift without the lines.
-              const shotsAt = (want, withBaseline) =>
-                actions.filter(a => a.status === want).map(a => (
-                  withBaseline
-                    ? {
-                        breakpoint: a.breakpoint,
-                        baseline: toPreviewUrl(a.baselinePath),
-                        actual: toPreviewUrl(a.actualPath),
-                        a11yOnly: a.a11yChanged === true && !a.diffPath,
-                        a11yDiff: a.a11yDiff || null,
-                      }
-                    : { breakpoint: a.breakpoint, actual: toPreviewUrl(a.actualPath) }
-                ));
-              const name = String(s.story || s.file || `story ${index}`).replace(/[\r\n]+/g, ' ');
-              // Failed takes precedence (the rollup order is failed > changed >
-              // new > pass), so a hard failure never lands in the changed/new
-              // buckets. Carry the first failed action's message + its breakpoint
-              // (schema: ActionResult.failureMessage / .breakpoint in result.d.ts);
-              // '' / undefined when absent. No candidate-tree keys: a failure is
-              // not an approvable change.
-              if (s.status === 'failed') {
-                const a = actions.find(x => x.status === 'failed') || {};
-                failed.push({ index, name, message: a.failureMessage || '', breakpoint: a.breakpoint });
-              } else if (statuses.includes('new')) {
-                added.push({ index, name, shots: shotsAt('new', false), actionKeys: keysAt('new') });
-              } else if (statuses.includes('changed')) {
-                changed.push({ index, name, shots: shotsAt('changed', true), actionKeys: keysAt('changed') });
-              }
-            });
-            // Deleted baselines are recorded one entry PER breakpoint per action
-            // (schema: DeletedBaseline { action, breakpoint, baselinePaths }), so
-            // group by display name -> a story dropped at N breakpoints is listed
-            // once carrying all N, never N duplicate rows.
-            const deletedIndex = new Map();
-            (r.deleted || []).forEach(d => {
-              const name = typeof d === 'string' ? d : (d.action || d.story || d.path || JSON.stringify(d));
-              const bp = (d && typeof d === 'object') ? d.breakpoint : undefined;
-              let group = deletedIndex.get(name);
-              if (!group) { group = { name, breakpoints: [] }; deletedIndex.set(name, group); deleted.push(group); }
-              if (bp && !group.breakpoints.includes(bp)) group.breakpoints.push(bp);
-            });
-            mismatchKeys = (r.environment && r.environment.mismatchKeys) || [];
           } catch (e) {
-            core.info(`Could not read story names from results.json: ${e.message}`);
+            // A comment that renders "no pending work" while the outcome says
+            // otherwise would read as a pass, so say plainly that the read failed.
+            core.warning(`Could not read story details from results.json: ${e.message}`);
           }
+          const { changed, added, deleted, failed, multiBreakpoint, mismatchKeys } = stories;
 
           const { owner, repo } = context.repo;
           const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;

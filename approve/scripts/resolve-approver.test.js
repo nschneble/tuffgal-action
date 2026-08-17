@@ -452,3 +452,28 @@ test('missing comment yields an empty body and a no-op', () => {
   assert.strictEqual(result.proceed, false);
   assert.strictEqual(result.reason, 'no-trigger');
 });
+
+// --- isAllowedPermission: the who-may-approve boundary --------------------- //
+
+const { APPROVE_PERMISSIONS, isAllowedPermission } = require('./resolve-approver.js');
+
+test('isAllowedPermission: admin, maintain, and write may approve', () => {
+  for (const level of ['admin', 'maintain', 'write']) {
+    assert.strictEqual(isAllowedPermission(level), true, `${level} may approve`);
+  }
+  assert.deepStrictEqual(APPROVE_PERMISSIONS, ['admin', 'maintain', 'write']);
+});
+
+test('isAllowedPermission: read and none may NOT approve', () => {
+  for (const level of ['read', 'none', 'triage']) {
+    assert.strictEqual(isAllowedPermission(level), false, `${level} must be refused`);
+  }
+});
+
+test('isAllowedPermission: a failed lookup (undefined/null/empty) fails closed', () => {
+  // The gate seeds `level = 'none'` and only overwrites it on a successful
+  // lookup, but the predicate must refuse these outright regardless.
+  for (const level of [undefined, null, '', 'ADMIN', 'write ', 0, {}]) {
+    assert.strictEqual(isAllowedPermission(level), false, `${String(level)} must be refused`);
+  }
+});

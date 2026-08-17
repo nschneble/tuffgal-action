@@ -2,13 +2,11 @@
 //
 // Pure, unit-testable decision for the per-PR Pages preview push: given the
 // combined stdout/stderr/message of a failed `git push`, decide whether a
-// re-sync + retry can plausibly succeed. Extracted out of the inline
-// `actions/github-script` block so the retryable-vs-terminal classification —
-// the one part of the retry loop with a right answer that live git can't
-// exercise in CI — is covered by a `node --test` suite, the same
-// extract-and-unit-test precedent set by the sibling `approve/scripts/*.js`
-// modules. The git side effects themselves (clone / stage / commit / push /
-// re-sync) stay inline; this module owns ONLY the verdict.
+// re-sync + retry can plausibly succeed. The retryable-vs-terminal
+// classification — the one part of the retry loop with a right answer that live
+// git can't exercise in CI — is covered by a `node --test` suite. The git side
+// effects themselves (clone / stage / commit / push / re-sync) stay inline; this
+// module owns ONLY the verdict.
 //
 // Two visual runs on DIFFERENT PRs (or reruns) can overlap on the shared
 // preview branch. Each replaces only its own `pr-<n>/` subtree, so the changes

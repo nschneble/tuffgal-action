@@ -48,7 +48,7 @@ const ACTION_NAME_PATTERN = /^[a-z0-9-]+$/;
 //   output: { keep: string[], remove: string[] } — a partition of presentDirNames
 //            (keep ∪ remove === present, disjoint).
 //     - selection === 'all' → keep = every present dir, remove = [] (a STRICT
-//       no-op: byte-identical to today's unconditional-promote behavior — the
+//       no-op: the full tree is promoted unconditionally — the
 //       regression guard for every existing full-approve consumer, since most
 //       approvals stay full 'all' via the master box or a mention).
 //     - selection is an array → remove = every ALLOWLIST-VALID present dir not in
@@ -62,28 +62,18 @@ const ACTION_NAME_PATTERN = /^[a-z0-9-]+$/;
 function computeCandidateFilter(selection, presentDirNames) {
   const present = [...presentDirNames];
 
-  // 'all' is a strict no-op: keep everything present, remove nothing. This branch
-  // must leave the tree byte-identical to today's unconditional promote.
+  // A full approve promotes everything, so this branch must leave the tree
+  // untouched.
   if (selection === 'all') {
     return { keep: present, remove: [] };
   }
 
-  // Partial approve: validate every selected key against the allowlist, then
-  // intersect with what's actually present. Membership is tested against the
-  // validated selection set, so a malformed / spoofed key (it isn't in the set)
-  // and any non-directory the caller failed to filter both fall into neither
-  // output — `remove` is always a subset of `present`.
   const selectedValid = new Set(
     (Array.isArray(selection) ? selection : []).filter((key) => ACTION_NAME_PATTERN.test(key)),
   );
-  // `remove` is the deletion set, so it is the sharp edge: constrain it to
-  // allowlist-valid present names HERE, in tested logic. A present dir whose own
-  // name fails the allowlist (a malformed / hand-crafted candidate-tree entry
-  // that is NOT selected) is left alone — never removed, never used to name an
-  // rmSync path — rather than reaching the inline deletion loop and aborting the
-  // whole approve with a runtime throw. `keep` is then everything not removed, so
-  // such a malformed present dir falls into `keep` (left alone) and the output
-  // stays a partition of `present`.
+  // `remove` is the deletion set, so it is the sharp edge: a present dir whose
+  // own name fails the allowlist is left alone rather than reaching the inline
+  // rmSync loop, which would abort the whole approve on a malformed entry.
   const remove = present.filter(
     (name) => !selectedValid.has(name) && ACTION_NAME_PATTERN.test(name),
   );

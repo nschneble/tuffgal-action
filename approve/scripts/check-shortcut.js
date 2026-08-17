@@ -52,19 +52,13 @@
 //               missing count. Fail-closed: never fabricate a check on a partial or
 //               on garbage input.
 function shouldSynthesizeCheck({ pendingTotal, keptCount } = {}) {
-  // Fail-closed on anything that isn't a concrete non-negative integer count. A
-  // NaN / undefined / non-integer count must never earn the shortcut.
   if (!Number.isInteger(pendingTotal) || !Number.isInteger(keptCount)) {
     return false;
   }
-  // Nothing was pending → an approve that changes nothing must not fabricate a
-  // passing check (defensive: a stray comment trigger against an empty candidate
-  // set). Also collapses any negative count to false.
   if (pendingTotal <= 0) {
     return false;
   }
-  // The full-clear gate. Strict equality also fail-closes the impossible
-  // keptCount > pendingTotal case: only an exact full promote earns the shortcut.
+  // Strict equality also fail-closes the impossible keptCount > pendingTotal case.
   return keptCount === pendingTotal;
 }
 
@@ -77,7 +71,7 @@ function shouldSynthesizeCheck({ pendingTotal, keptCount } = {}) {
 // never candidate action-dirs and always resolve unconditionally under `--prune` —
 // still let a deletion-only run reach a full clear.
 //
-// Fallback order (replicated EXACTLY from the prior inline implementation):
+// Fallback order:
 //   1. Prefer `.totals.deleted` when it is an integer — this is the authoritative
 //      per-run total. Note the guard is `Number.isInteger`, evaluated on the RAW
 //      value: a NON-integer `.totals.deleted` (e.g. 2.5) falls through to step 2,

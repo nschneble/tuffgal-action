@@ -91,7 +91,14 @@ jobs:
 
           craft_symlink "$work/evil-symlink.zip" 'visit-home/0.png' '/etc/passwd'
 
-          for bad in evil-type evil-traversal evil-absolute evil-backslash evil-symlink; do
+          # Not a zip at all (and its truncated cousin). `zipinfo` fails, so both
+          # passes see zero entries — the shape that used to sail through with an
+          # "all entries are baselines-safe" all-clear on an artifact the
+          # validator never actually read.
+          printf 'not a zip at all' > "$work/evil-garbage.zip"
+          head -c 32 "$work/ok.zip" > "$work/evil-truncated.zip"
+
+          for bad in evil-type evil-traversal evil-absolute evil-backslash evil-symlink evil-garbage evil-truncated; do
             if bash "$validator" "$work/$bad.zip"; then
               echo "FAIL: $bad.zip was accepted but should be rejected" >&2; exit 1
             fi
@@ -105,8 +112,10 @@ jobs:
   # fail-closed candidate-artifact selection (select-candidate.js), the
   # per-baseline candidate filtering (filter-candidates.js), the re-run
   # check-shortcut gate + deletion folding (check-shortcut.js), and the
-  # loop-safe sticky-comment status transforms (report-comment.js). The
-  # approve/scripts/*.test.js glob runs all six. No live GitHub run needed; no
+  # loop-safe sticky-comment status transforms (report-comment.js), the approval
+  # lock + its can-this-request-start decision (approve-lock.js), and the CTA
+  # rewrites a landed approval leaves behind (approve-cta.js). The
+  # approve/scripts/*.test.js glob runs them all. No live GitHub run needed; no
   # deps beyond Node's built-in node:test + node:assert. Also unit-locks the
   # subdir-frame correctness alongside the approve-subdir-frame smoke job below.
   approve-scripts-unit:
@@ -129,13 +138,14 @@ jobs:
   # `GITHUB_ACTION_PATH` resolves to a nonexistent path and crashes the step at
   # runtime. The comment-gated approve flow can't run in CI, so this job is the
   # only tripwire against the require-blocker regression: it locks the
-  # documented-correct idiom in source for all six approve modules —
+  # documented-correct idiom in source for every approve module —
   # baseline-tree.js (commit step), resolve-approver.js (permission gate),
   # select-candidate.js (download step), filter-candidates.js (per-baseline
   # filter step), check-shortcut.js (required in both the filter step, for
   # the deletion count, and the commit step, for the shortcut gate), and
   # report-comment.js (the in-flight / milestone / final / failure
-  # sticky-comment status steps)
+  # sticky-comment status steps), approve-lock.js (the box lock + in-flight
+  # lock), and approve-cta.js (the final step's CTA rewrites)
   # — asserting the composite passes its `github.action_path` through the
   # step env as ACTION_PATH and each script requires from that.
   approve-require-source-lock:
@@ -160,7 +170,7 @@ jobs:
           # shellcheck disable=SC2016
           good_suffix='.js`)'
           bad_prefix='process.env.GITHUB_ACTION_PATH}/scripts/'
-          for mod in baseline-tree resolve-approver select-candidate filter-candidates check-shortcut report-comment; do
+          for mod in baseline-tree resolve-approver select-candidate filter-candidates check-shortcut report-comment approve-lock approve-cta; do
             if ! grep -Fq "${good_prefix}${mod}${good_suffix}" approve/action.yml; then
               echo "approve/action.yml must require $mod.js via process.env.ACTION_PATH." >&2
               exit 1
@@ -306,10 +316,13 @@ jobs:
           fi
           # ...and the script must require the module from ACTION_PATH.
           # shellcheck disable=SC2016
-          if ! grep -Fq 'require(`${process.env.ACTION_PATH}/scripts/build-comment.js`)' action.yml; then
-            echo "action.yml comment step must require build-comment.js via process.env.ACTION_PATH." >&2
-            exit 1
-          fi
+          for mod in build-comment build-stories; do
+            # shellcheck disable=SC2016
+            if ! grep -Fq "require(\`\${process.env.ACTION_PATH}/scripts/${mod}.js\`)" action.yml; then
+              echo "action.yml comment step must require $mod.js via process.env.ACTION_PATH." >&2
+              exit 1
+            fi
+          done
           # The broken bare-GITHUB_ACTION_PATH require (wrong dir inside a nested
           # github-script step) must NOT reappear.
           # shellcheck disable=SC2016
@@ -758,8 +771,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Mirrors the apply-step guard exactly: a symlink materialized under
-          # baselines must fail closed the moment the head tree is extracted.
+          # The attack chain, executed rather than described: a malicious head
+          # commit CARRIES a symlink under the baselines path, and the apply step
+          # seeds that path with `git archive <head>:<path> | tar -x`. The
+          # interesting external fact is that the pipe materializes a committed
+          # symlink AS a symlink — planting one with `ln -s` would assert nothing
+          # about git. The guard below is the apply step's, source-locked above.
           guard() { # $1 = the seeded baselines dir under test
             if find "$1" -type l | grep -q .; then
               echo "Refusing symlink in seeded baselines" >&2
@@ -768,25 +785,49 @@ jobs:
             return 0
           }
 
-          # Direction 1 — a clean seeded tree of regular files passes.
-          clean="$(mktemp -d)"
-          mkdir -p "$clean/visit-home"
-          printf 'x' > "$clean/visit-home/0.png"
-          if ! guard "$clean"; then
+          repo="$(mktemp -d)"
+          git -C "$repo" init -q
+          git -C "$repo" config user.email ci@example.com
+          git -C "$repo" config user.name ci
+          mkdir -p "$repo/tuffgal/baselines/visit-home"
+          printf 'x' > "$repo/tuffgal/baselines/visit-home/0.png"
+          git -C "$repo" add -A
+          git -C "$repo" commit -qm clean
+          clean_sha="$(git -C "$repo" rev-parse HEAD)"
+
+          # The malicious commit: a symlink pointing outside the repo, committed
+          # as a symlink object.
+          ln -s /etc/passwd "$repo/tuffgal/baselines/visit-home/leak.png"
+          git -C "$repo" add -A
+          git -C "$repo" commit -qm evil
+          evil_sha="$(git -C "$repo" rev-parse HEAD)"
+
+          seed() { # $1 = commit sha -> prints the seeded dir
+            local dir
+            dir="$(mktemp -d)"
+            git -C "$repo" archive "$1:tuffgal/baselines" | tar -x -C "$dir"
+            echo "$dir"
+          }
+
+          # Direction 1 — the clean commit seeds regular files and passes.
+          clean_dir="$(seed "$clean_sha")"
+          if ! guard "$clean_dir"; then
             echo "FAIL: clean seeded baselines were rejected" >&2; exit 1
           fi
 
-          # Direction 2 — a tree carrying a symlink (as `git archive | tar -x`
-          # would recreate from a malicious head commit) must be refused.
-          evil="$(mktemp -d)"
-          mkdir -p "$evil/visit-home"
-          printf 'x' > "$evil/visit-home/0.png"
-          ln -s /etc/passwd "$evil/visit-home/leak.png"
-          if guard "$evil"; then
+          # Direction 2 — the malicious commit's symlink survives the pipe as a
+          # symlink (assert that first, or the guard below proves nothing) and is
+          # refused.
+          evil_dir="$(seed "$evil_sha")"
+          if [ ! -L "$evil_dir/visit-home/leak.png" ]; then
+            echo "FAIL: git archive | tar -x did not materialize the committed symlink AS a symlink — this test no longer exercises the attack." >&2
+            exit 1
+          fi
+          if guard "$evil_dir"; then
             echo "FAIL: seeded baselines carrying a symlink were accepted" >&2; exit 1
           fi
 
-          echo "symlink-backstop: clean tree passes, symlinked tree refused."
+          echo "symlink-backstop: git-archive-seeded clean tree passes, symlinked tree refused."
 
   # Source lock for the example approve workflow's trigger condition. The `if:`
   # pre-filter in examples/tuffgal-approve.yml must fire for BOTH a ticked master
@@ -844,6 +885,106 @@ jobs:
             exit 1
           fi
           echo "approve-example-trigger-source-lock: per-PR concurrency group locked, cancel-in-progress pinned false."
+      - name: README's copy-paste approve workflow carries the same serializer (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The README block is the one most consumers copy — examples/ is a
+          # parenthetical below it. A serializer present in only one of the two
+          # copies is the hand-duplication drift this repo keeps locking.
+          # shellcheck disable=SC2016
+          if ! grep -Fq 'group: tuffgal-approve-${{ github.event.issue.number }}' README.md; then
+            echo "README.md's approve workflow snippet must carry the per-PR concurrency group." >&2
+            exit 1
+          fi
+          if ! grep -Fq 'cancel-in-progress: false' README.md; then
+            echo "README.md's approve workflow snippet must pin cancel-in-progress: false." >&2
+            exit 1
+          fi
+          echo "README approve snippet: serializer present."
+
+  # Source lock for the bot's own `@tuffgal approve` literals. resolve-approver.js
+  # treats a comment containing an UNBACKTICKED `@tuffgal approve` as a mention
+  # trigger, and a mention resolves the approver from the comment AUTHOR — which,
+  # for the bot's own sticky comment, is the bot, whose `[bot]` suffix then fails
+  # the gate closed. The failure is silent and total: every checkbox approval on
+  # that PR stops working. Backticks are the only thing keeping the bot's own
+  # prose out of that path, so they are pinned here for the two files that write
+  # comment bodies. Test files are exempt — constructing real trigger comments is
+  # exactly their job.
+  approve-mention-backtick-source-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Bot-authored approve mentions stay backticked (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -noP '(?<!`)@tuffgal approve' scripts/build-comment.js approve/action.yml; then
+            echo "An unbackticked '@tuffgal approve' in a bot-authored string turns the sticky comment into its own mention trigger, which fails the gate closed and silently kills checkbox approvals on that PR." >&2
+            exit 1
+          fi
+          echo "approve-mention-backtick-source-lock: every bot-authored mention is backticked."
+
+  # Source lock for the approve flow's two trust boundaries. Both live in the
+  # permission-gate step, which needs a live comment event to run, so neither is
+  # reachable by a test:
+  #   - the permission check must go through resolve-approver.js's
+  #     isAllowedPermission (unit-tested there against every level, including the
+  #     undefined a failed lookup leaves behind) rather than an inline allowlist
+  #     that could quietly gain 'read';
+  #   - the fork decline must compare the PR HEAD repo against the base and bail,
+  #     because the default token cannot push to a fork branch and a fork PR's
+  #     head is untrusted.
+  approve-gate-source-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Permission allowlist + fork decline stay in the gate (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -Fq 'if (!isAllowedPermission(level))' approve/action.yml; then
+            echo "approve/action.yml must gate on resolve-approver.js's isAllowedPermission, not an inline allowlist." >&2
+            exit 1
+          fi
+          # A raw allowlist array back in the gate means the tested predicate was
+          # bypassed.
+          if grep -Fq "const allowed = ['admin'" approve/action.yml; then
+            echo "approve/action.yml reintroduced an inline permission allowlist." >&2
+            exit 1
+          fi
+          if ! grep -Fq 'if (headRepo !== baseRepo)' approve/action.yml; then
+            echo "approve/action.yml is missing the fork decline — the default token cannot push to a fork branch." >&2
+            exit 1
+          fi
+          echo "approve-gate-source-lock: permission predicate + fork decline both present."
+
+  # Source lock for the approve flow's busy gate. When a second approval is
+  # refused mid-flight, `report_status` sets `busy=true` and every other step must
+  # skip — including the three comment-writing steps, whose writes would otherwise
+  # unlock the boxes and stamp "Approval didn't complete" over a LIVE run's banner
+  # mid-commit. That safety property must be an explicit condition on each step,
+  # never an emergent consequence of an empty `comment_id` output that a later
+  # refactor could set earlier. The busy path needs a live concurrent approval, so
+  # no test can reach it; this job is the tripwire.
+  approve-busy-gate-source-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Every step below the gate carries the busy check (source lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          gated="$(grep -c "steps.report_status.outputs.busy != 'true'" approve/action.yml)"
+          proceeds="$(grep -c "steps.gate.outputs.proceed == 'true'" approve/action.yml)"
+          # Every proceed-gated step carries the busy check EXCEPT report_status
+          # itself, which is the step that computes it.
+          if [ "$gated" -ne "$(( proceeds - 1 ))" ]; then
+            echo "approve/action.yml: $gated of $(( proceeds - 1 )) proceed-gated steps carry the busy check — a step below the gate would run for a refused request." >&2
+            exit 1
+          fi
+          echo "approve-busy-gate-source-lock: all $gated proceed-gated steps below the gate refuse a busy request."
 
   # Unit test for the parse step's no-results guard. A results.json that is
   # missing OR malformed (empty, whitespace, truncated, not a JSON object) must

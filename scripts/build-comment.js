@@ -5,12 +5,10 @@
 // counts, the env-mismatch flag and keys, the (possibly empty) preview URL, the
 // per-story per-breakpoint image URLs read out of results.json, and whether the
 // run spanned more than one breakpoint — it returns the final markdown `body`
-// string. Extracted out of the inline `actions/github-script`
-// block so the branch matrix (preview vs none, changed/new/deleted/failed
+// string, so the branch matrix (preview vs none, changed/new/deleted/failed
 // sections, env-mismatch banner, approve CTA, pass/failed/no-results outcomes,
-// and the compact short-circuit skipped-suite body) is covered
-// by a `node --test` suite, the same extract-and-unit-test precedent set by the
-// sibling `approve/scripts/*.js` and `pages-push.js` modules.
+// and the compact short-circuit skipped-suite body) is covered by a
+// `node --test` suite.
 //
 // The GitHub API side of the step — reading env, resolving results.json image
 // paths to preview URLs, and the `listComments` / `updateComment` /
@@ -28,165 +26,13 @@
 // that cannot cross-require this one — so keep the two byte-identical.
 const MARKER = "<!-- tuffgal-report -->";
 
-// The action-key allowlist, applied on the WRITE side so a malformed key never
-// even reaches the rendered marker. Intentionally hand-duplicated (not imported)
-// from `approve/scripts/filter-candidates.js`'s `ACTION_NAME_PATTERN` because
-// that lives in a SEPARATE action package which this module can't cross-require —
-// the same hand-duplication precedent already used for `MARKER` and the other
-// cross-package constants in this repo. Keep byte-identical to that copy.
-const ACTION_NAME_PATTERN = /^[a-z0-9-]+$/;
-
-// Per-item approve marker. Each Changed/New baseline entry gets its own GFM
-// task-list checkbox carrying this marker with the entry's candidate-tree
-// action keys embedded directly in the HTML comment — comma-joined, each key
-// matching `[a-z0-9-]+` so the join is unambiguous to split back apart. The
-// trigger parser (`resolve-approver.js`) regex-extracts `(marker keys) +
-// (ticked state)` per line straight from the comment body, with no external
-// index/lookup table. The `:` prefix keeps it distinct from the master
-// `<!-- tuffgal-approve-box -->` box so neither grep can match the other. Keys
-// are allowlist-filtered before the join (defense in depth, not trust in the
-// upstream `keysAt` caller), so a malformed key never reaches the comment; an
-// empty result renders an empty payload (`tuffgal-approve-item:`), never a
-// malformed marker.
-const APPROVE_ITEM_MARKER_PREFIX = "tuffgal-approve-item:";
-const approveItemMarker = (actionKeys) =>
-  `<!-- ${APPROVE_ITEM_MARKER_PREFIX}${(actionKeys || [])
-    .filter((key) => typeof key === "string" && ACTION_NAME_PATTERN.test(key))
-    .join(",")} -->`;
-
-// The distinct, non-empty breakpoint names an entry drifted at, in first-seen
-// order. Drives both the multi-breakpoint checkbox suffix and (via the caller)
-// the per-breakpoint detail rows. Empty for a single-config/legacy run whose
-// actions carry no `breakpoint`.
-const distinctBreakpoints = (shots) => {
-  const out = [];
-  for (const shot of shots || []) {
-    if (shot && shot.breakpoint && !out.includes(shot.breakpoint)) {
-      out.push(shot.breakpoint);
-    }
-  }
-  return out;
-};
-
-// One per-item approve checkbox line. Rendered as a top-level task-list item
-// (not nested inside the entry's `<details>`) on purpose: a checkbox toggled
-// inside a `<details>` bubbles its click to the collapsible and snaps it shut,
-// so the interactive box lives on its own line above the thumbnails.
-//
-// In multi-breakpoint mode a plain-text `(mobile, desktop)` suffix naming the
-// drifted breakpoints is appended AFTER the marker + tick-box. That suffix is
-// free text to `resolve-approver.js`'s `CHECKED_ITEM_BOX` regex, which matches
-// only the literal marker through its `-->` and the tick state — never trailing
-// text — so the suffix can never perturb which keys a ticked box approves.
-//
-// The approve action's `report-comment.js` `applyPartialApproval` also READS this
-// line on a partial approve: it detects an item box by the marker (the
-// load-bearing part), then relabels an approved one to
-// `- ✅ Approved **name** (suffix)`, keying the label off the ` Approve ` prefix +
-// the `**name**` wrapper rendered here. Keep this ` Approve **name**` prose +
-// suffix layout in step with that reader — the same cross-file read-dependency
-// precedent as resolve-approver.js reading the marker above.
-const approveItemCheckbox = (entry, multiBreakpoint) => {
-  let line = `- [ ] ${approveItemMarker(entry.actionKeys)} Approve **${escapeHtml(
-    entry.name
-  )}**`;
-  if (multiBreakpoint) {
-    const bps = distinctBreakpoints(entry.shots);
-    if (bps.length) line += ` (${bps.map(escapeHtml).join(", ")})`;
-  }
-  // Names WHY an entry with no visible change is sitting in the Changed list.
-  // Free text to the trigger parser, exactly like the breakpoint suffix above.
-  if (isA11yOnlyEntry(entry)) line += " — a11y only";
-  return line;
-};
-
-// An entry whose every drifted shot was an accessibility-snapshot drift with
-// matching pixels. Read off the shots the caller built from results.json, where
-// a shot is a11y-only when its action carried `a11yChanged === true` and no
-// `diffPath` (schema/result.ts's positive discriminator — a size-mismatch row
-// also lacks a diffPath but never sets a11yChanged).
-const isA11yOnlyEntry = (entry) => {
-  const shots = (entry && entry.shots) || [];
-  return shots.length > 0 && shots.every((shot) => shot && shot.a11yOnly);
-};
-
-// The rendered diff budget for ONE shot in a comment. tuffgal already clips its
-// payload; this is the tighter comment-side ceiling, since a run can carry many
-// drifted stories and the whole body shares one comment.
-const MAX_A11Y_DIFF_LINES = 20;
-
-// A fenced ```diff block for one shot's a11y drift, or an italic line when the
-// result carried no diff (an older tuffgal, or snapshots too large to diff
-// line-by-line — in which case the recorded counts still name the change).
-//
-// The fence is grown past the longest backtick run in the content, so a snapshot
-// carrying a literal ``` in an accessible name cannot break out of the block.
-function renderA11yDiff(diff) {
-  const all = (diff && diff.lines) || [];
-  if (!all.length) {
-    const size =
-      diff && (diff.added || diff.removed)
-        ? ` (${diff.added} added, ${diff.removed} removed)`
-        : "";
-    return [`_No line diff available${size} — open the report for the full snapshot._`];
-  }
-  const clipped = all.slice(0, MAX_A11Y_DIFF_LINES);
-  const longestRun = clipped.reduce((longest, line) => {
-    const runs = String(line).match(/`+/g) || [];
-    return runs.reduce((max, run) => Math.max(max, run.length), longest);
-  }, 2);
-  const fence = "`".repeat(longestRun + 1);
-  const out = [`${fence}diff`, ...clipped, fence];
-  if (all.length > clipped.length || (diff && diff.truncated)) {
-    out.push("");
-    out.push(
-      `_Diff clipped — ${diff.added} added, ${diff.removed} removed in full._`
-    );
-  }
-  return out;
-}
-
-// Escape text for HTML flow content (story names in a <summary>).
-const escapeHtml = (text) =>
-  String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-
-// Escape text for an HTML attribute value (the <img> src URL and alt text).
-// Extends the flow escape with `"` so a value carrying a double quote — a
-// crafted story name in the alt, or a stray quote in an image path in the src —
-// can't break out of the attribute. Cosmetic markdown-injection hardening.
-const escapeAttribute = (text) => escapeHtml(text).replace(/"/g, "&quot;");
-
-// The character budget for a rendered failure message in the Failed section.
-// Long harness/Playwright errors get clipped to keep the comment scannable; the
-// full message stays in the linked report and the `tuffgal-report` artifact.
-const MAX_FAILURE_MESSAGE = 140;
-
-// Normalize a story's failure message for one-line rendering: collapse every
-// whitespace run (newlines, tabs, indentation) to a single space, trim, clip to
-// the budget with an ellipsis marker, then HTML-escape. Escaping happens LAST so
-// the clip can never split a `&lt;`-style entity mid-sequence.
-const failureMessage = (message) => {
-  const oneLine = String(message == null ? "" : message)
-    .replace(/\s+/g, " ")
-    .trim();
-  const clipped =
-    oneLine.length > MAX_FAILURE_MESSAGE
-      ? oneLine.slice(0, MAX_FAILURE_MESSAGE).trimEnd() + "…"
-      : oneLine;
-  return escapeHtml(clipped);
-};
-
-// One inline thumbnail, or an italic placeholder when its preview URL is null
-// (preview off, or the image lives under neither report nor baselines root).
-const thumbnail = (url, label) =>
-  url
-    ? `<img src="${escapeAttribute(url)}" alt="${escapeAttribute(
-        label
-      )}" width="260">`
-    : `<em>${escapeHtml(label)} unavailable</em>`;
+const { ACTION_NAME_PATTERN, approveItemMarker } = require("./comment-approve.js");
+const { renderChangedSection } = require("./comment-changed.js");
+const {
+  renderAddedSection,
+  renderDeletedSection,
+  renderFailedSection,
+} = require("./comment-sections.js");
 
 // The env-mismatch banner. Extracted for reuse; the bash step-summary still
 // hand-duplicates this wording, so the two are kept in step with each other.
@@ -234,36 +80,18 @@ const ACTIONABLE = {
 //   envMismatch   boolean — render the capture-environment banner
 //   mismatchKeys  string[] — the changed environment keys, listed under the banner
 //   previewUrl    normalized Pages URL (no trailing slash), or '' when no preview
-//   changed       [{ index, name, shots, actionKeys }] — `shots` is one entry
-//                 per drifted breakpoint: { breakpoint, baseline, actual,
-//                 a11yOnly, a11yDiff } with image URLs or null. A shot whose
-//                 pixels matched and whose accessibility tree drifted carries
-//                 `a11yOnly: true` plus results.json's `a11yDiff` payload, and
-//                 renders as a fenced diff instead of thumbnails (an entry whose
-//                 every shot is a11y-only renders that way wholesale, preview or
-//                 not). Single-breakpoint/legacy runs carry one
-//                 shot (breakpoint absent) and render `shots[0]` exactly as
-//                 before; multi-breakpoint runs render one detail row per shot.
-//                 actionKeys is the story's changed candidate-tree keys.
-//   added         [{ index, name, shots, actionKeys }] — same shape; each shot's
-//                 `actual` is the proposed baseline (no `baseline` — none exists
-//                 yet). actionKeys is the story's new keys.
-//   deleted       [{ name, breakpoints }] — one entry per removed story/action
-//                 (grouped across breakpoints, so a multi-breakpoint deletion is
-//                 listed once, not once per breakpoint). `breakpoints` is the
-//                 breakpoint names it was removed at; rendered only in
+//   changed       entries from build-stories.js, which documents their shape.
+//                 A shot carrying `a11yOnly` renders as a fenced diff instead of
+//                 thumbnails — and renders with no preview, since a diff needs
+//                 nothing hosted.
+//   added         same shape; each shot carries `actual` only (the proposed
+//                 baseline — no prior one exists).
+//   deleted       [{ name, breakpoints }] — one entry per removed story/action,
+//                 grouped across breakpoints. `breakpoints` renders only in
 //                 multi-breakpoint mode.
-//   failed        [{ index, name, message, breakpoint }] — hard-failed stories
-//                 with the first failed action's failure message (already
-//                 collapsed to one line at the call site, re-normalized +
-//                 truncated here) and that action's breakpoint (labelled only in
-//                 multi-breakpoint mode). No approve checkbox: a failure is not
-//                 an approvable change.
-//   multiBreakpoint  boolean — true when this run spans more than one distinct
-//                 breakpoint. Drives per-breakpoint detail rows + labels; false
-//                 (the common single-config case, and legacy artifacts with no
-//                 `breakpoint` field) renders byte-identically to the prior
-//                 single-representative-shot output.
+//   failed        [{ index, name, message, breakpoint }] — no approve checkbox:
+//                 a failure is not an approvable change.
+//   multiBreakpoint  boolean — drives per-breakpoint detail rows + labels.
 //   runUrl        the workflow-run URL for the fallback link
 //   shortCircuit  optional { sha } — when present, the run was skipped because
 //                 the triggering commit only promotes already-approved
@@ -325,192 +153,10 @@ function buildCommentBody({
   for (const line of renderTotalsTable(counts)) lines.push(line);
   lines.push("");
 
-  // Changed: with a preview, each story is a collapsible carrying inline
-  // baseline / actual thumbnails plus a deep-link that opens the report
-  // scrolled to that story with its screenshots (including the full diff)
-  // expanded. Without a preview,
-  // fall back to a plain name list. The alt text threads the story name so a
-  // screen-reader user gets per-image context in a multi-story comment.
-  if (changed.length) {
-    lines.push(`### Changed (${changed.length})`);
-    lines.push("");
-    for (const entry of changed) {
-      lines.push(approveItemCheckbox(entry, multiBreakpoint));
-      // An a11y-only entry has nothing to look at: its baseline and actual PNGs
-      // match. Render the accessibility diff in their place — and render it with
-      // or without a preview, since a fenced diff needs nothing hosted.
-      if (isA11yOnlyEntry(entry)) {
-        lines.push("<details>");
-        lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
-        lines.push("");
-        lines.push("Pixels unchanged. The accessibility snapshot drifted.");
-        lines.push("");
-        for (const shot of entry.shots) {
-          if (multiBreakpoint && shot.breakpoint) {
-            lines.push(`**${escapeHtml(shot.breakpoint)}**`);
-            lines.push("");
-          }
-          for (const line of renderA11yDiff(shot.a11yDiff)) lines.push(line);
-          lines.push("");
-        }
-        if (previewUrl) {
-          lines.push(
-            `[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`
-          );
-        }
-        lines.push("</details>");
-        lines.push("");
-      } else if (previewUrl) {
-        lines.push("<details>");
-        lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
-        lines.push("");
-        if (multiBreakpoint) {
-          // One row per drifted breakpoint, each labelled with its mode name.
-          // A breakpoint that drifted in the accessibility tree ALONE has no
-          // thumbnails worth a row (its two PNGs match), so it renders as a
-          // diff under the table instead.
-          const pixelShots = (entry.shots || []).filter((s) => !s.a11yOnly);
-          const a11yShots = (entry.shots || []).filter((s) => s.a11yOnly);
-          lines.push("| Breakpoint | Baseline | Actual |");
-          lines.push("|---|---|---|");
-          for (const shot of pixelShots) {
-            lines.push(
-              `| ${escapeHtml(
-                shot.breakpoint == null ? "" : shot.breakpoint
-              )} | ${thumbnail(
-                shot.baseline,
-                `baseline for ${entry.name}`
-              )} | ${thumbnail(shot.actual, `actual for ${entry.name}`)} |`
-            );
-          }
-          for (const shot of a11yShots) {
-            lines.push("");
-            lines.push(
-              `**${escapeHtml(
-                shot.breakpoint == null ? "" : shot.breakpoint
-              )}** — pixels unchanged, accessibility snapshot drifted.`
-            );
-            lines.push("");
-            for (const line of renderA11yDiff(shot.a11yDiff)) lines.push(line);
-          }
-        } else {
-          // Single representative shot — byte-identical to the pre-breakpoint
-          // two-column table.
-          const shot = (entry.shots && entry.shots[0]) || {};
-          lines.push("| Baseline | Actual |");
-          lines.push("|---|---|");
-          lines.push(
-            `| ${thumbnail(
-              shot.baseline,
-              `baseline for ${entry.name}`
-            )} | ${thumbnail(shot.actual, `actual for ${entry.name}`)} |`
-          );
-        }
-        lines.push("");
-        lines.push(
-          `[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`
-        );
-        lines.push("</details>");
-        lines.push("");
-      }
-    }
-    lines.push("");
-  }
-
-  // New: no prior baseline to compare, so show the proposed one (the run's
-  // actual = the candidate) inline.
-  if (added.length) {
-    lines.push(`### New (${added.length})`);
-    lines.push("");
-    for (const entry of added) {
-      lines.push(approveItemCheckbox(entry, multiBreakpoint));
-      if (previewUrl) {
-        lines.push("<details>");
-        lines.push(`<summary>${escapeHtml(entry.name)}</summary>`);
-        lines.push("");
-        if (multiBreakpoint) {
-          // One actual-only row per breakpoint — there is no prior baseline.
-          lines.push("| Breakpoint | Actual |");
-          lines.push("|---|---|");
-          for (const shot of entry.shots || []) {
-            lines.push(
-              `| ${escapeHtml(
-                shot.breakpoint == null ? "" : shot.breakpoint
-              )} | ${thumbnail(
-                shot.actual,
-                `proposed baseline for ${entry.name}`
-              )} |`
-            );
-          }
-        } else {
-          const shot = (entry.shots && entry.shots[0]) || {};
-          lines.push(
-            `Proposed new baseline: ${thumbnail(
-              shot.actual,
-              `proposed baseline for ${entry.name}`
-            )}`
-          );
-        }
-        lines.push("");
-        lines.push(
-          `[Open ${escapeHtml(entry.name)} in report →](${storyLink(entry)})`
-        );
-        lines.push("</details>");
-        lines.push("");
-      }
-    }
-    lines.push("");
-  }
-
-  if (deleted.length) {
-    lines.push(`### Deleted (${deleted.length})`);
-    for (const entry of deleted) {
-      let line = `- ${escapeHtml(String(entry.name).replace(/[\r\n]+/g, " "))}`;
-      // In multi-breakpoint mode, name the breakpoints the story was removed at.
-      // The entries are grouped by story/action upstream, so a story dropped at
-      // N breakpoints is listed ONCE with all its breakpoints — not N times.
-      if (multiBreakpoint && entry.breakpoints && entry.breakpoints.length) {
-        line += ` — ${entry.breakpoints.map(escapeHtml).join(", ")}`;
-      }
-      lines.push(line);
-    }
-    // With a preview, link the report's stable deleted-baselines heading. The
-    // report renders a single `<h2 id="deleted-heading">`, not per-name anchors,
-    // so this is one section-level link, never one per deleted story.
-    if (reportUrl) {
-      lines.push("");
-      lines.push(
-        `[View deleted baselines in report →](${reportUrl}#deleted-heading)`
-      );
-    }
-    lines.push("");
-  }
-
-  // Failed: hard failures, listed after Deleted to mirror the totals-table row
-  // order (Pass, Changed, New, Deleted, Failed, Total). Each is a plain bullet —
-  // name, the normalized/truncated failure message, and a report deep-link when
-  // a preview exists. Deliberately NO approve checkbox: a failure isn't an
-  // approvable baseline change, and `pending` (the approve-CTA gate) counts only
-  // new/changed/deleted, so a failed-only run never offers approval.
-  if (failed.length) {
-    lines.push(`### Failed (${failed.length})`);
-    lines.push("");
-    for (const entry of failed) {
-      const message = failureMessage(entry.message);
-      const link = storyLink(entry);
-      let line = `- **${escapeHtml(entry.name)}**`;
-      // In multi-breakpoint mode, name which breakpoint failed right after the
-      // story name; single-breakpoint mode stays label-free (pre-breakpoint output).
-      if (multiBreakpoint && entry.breakpoint) {
-        line += ` (${escapeHtml(entry.breakpoint)})`;
-      }
-      if (message) line += ` — ${message}`;
-      if (link)
-        line += ` [Open ${escapeHtml(entry.name)} in report →](${link})`;
-      lines.push(line);
-    }
-    lines.push("");
-  }
+  for (const line of renderChangedSection(changed, { previewUrl, multiBreakpoint, storyLink })) lines.push(line);
+  for (const line of renderAddedSection(added, { previewUrl, multiBreakpoint, storyLink })) lines.push(line);
+  for (const line of renderDeletedSection(deleted, { multiBreakpoint, reportUrl })) lines.push(line);
+  for (const line of renderFailedSection(failed, { multiBreakpoint, storyLink })) lines.push(line);
 
   // Name the concrete next step for the two outcomes that otherwise fall to a
   // bare run link, matching the tone of the approve preflight's messages.
@@ -561,6 +207,7 @@ function buildCommentBody({
 
 module.exports = {
   MARKER,
+  ACTION_NAME_PATTERN,
   approveItemMarker,
   buildCommentBody,
   renderEnvMismatchBanner,
