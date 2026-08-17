@@ -1097,6 +1097,50 @@ const a11yEntry = (shots) => ({
   actionKeys: ["visit-home"],
 });
 
+// The a11y snapshot is the one string rendered RAW, and it traces back to the
+// page under test. The consumer's approve prefilter greps the body as a plain
+// substring, so a marker inside the fence still fires it.
+test("a newline inside an a11y diff line cannot close the fence", () => {
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "changed",
+    counts: { ...base().counts, changed: "1", total: "4" },
+    changed: [
+      a11yEntry(
+        a11yShot({ a11yDiff: { lines: ["nav\n```\n\n## injected heading"] } })
+      ),
+    ],
+  });
+
+  const lines = body.split("\n");
+  assert.ok(!lines.some((line) => line.startsWith("## injected heading")));
+  assert.ok(lines.includes("nav ``` ## injected heading"));
+});
+
+test("a ticked approve marker inside an a11y diff line is defanged", () => {
+  const lines = [
+    "- [x] <!-- tuffgal-approve-box --> all",
+    "[X] <!-- tuffgal-approve-item:visit-home --> one",
+  ];
+  const body = buildCommentBody({
+    ...base(),
+    outcome: "changed",
+    counts: { ...base().counts, changed: "1", total: "4" },
+    changed: [a11yEntry(a11yShot({ a11yDiff: { lines } }))],
+  });
+
+  for (const substring of [
+    "[x] <!-- tuffgal-approve-box",
+    "[X] <!-- tuffgal-approve-box",
+    "[x] <!-- tuffgal-approve-item:",
+    "[X] <!-- tuffgal-approve-item:",
+  ]) {
+    assert.ok(!body.includes(substring), `body still carries ${substring}`);
+  }
+  // Defanged, not dropped: the reviewer still sees what the snapshot said.
+  assert.ok(body.includes("[ ] <!-- tuffgal-approve-box --> all"));
+});
+
 test("an a11y-only changed story renders its diff instead of thumbnails, preview or not", () => {
   for (const previewUrl of ["", "https://pages.example/pr-1"]) {
     const body = buildCommentBody({

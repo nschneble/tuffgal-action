@@ -19,6 +19,12 @@ const isA11yOnlyEntry = (entry) => {
 // drifted stories and the whole body shares one comment.
 const MAX_A11Y_DIFF_LINES = 20;
 
+// Escaping would corrupt the fenced diff, so strip only what escapes the fence.
+const sanitizeDiffLine = (line) =>
+  String(line)
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\[[xX]\](\s*<!--\s*tuffgal-approve)/g, "[ ]$1");
+
 // A fenced ```diff block for one shot's a11y drift, or an italic line when the
 // result carried no diff (an older tuffgal, or snapshots too large to diff
 // line-by-line — in which case the recorded counts still name the change).
@@ -34,7 +40,7 @@ function renderA11yDiff(diff) {
         : "";
     return [`_No line diff available${size} — open the report for the full snapshot._`];
   }
-  const clipped = all.slice(0, MAX_A11Y_DIFF_LINES);
+  const clipped = all.slice(0, MAX_A11Y_DIFF_LINES).map(sanitizeDiffLine);
   const longestRun = clipped.reduce((longest, line) => {
     const runs = String(line).match(/`+/g) || [];
     return runs.reduce((max, run) => Math.max(max, run.length), longest);
