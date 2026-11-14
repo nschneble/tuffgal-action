@@ -12,15 +12,12 @@ _Nothing just yet_
 
 ### Changed
 
-- The self-test fixture runs against `tuffgal@0.3.2-alpha.1`, with its
-  baselines recaptured in CI
+- Bumped `reviewdog/action-actionlint` to v1.84.0
+- The self-test fixture locks `zod@4.6.7`, clearing GHSA-mrhx-c7xc-m3w5
 - The self-test fixture pins Playwright 1.62.1, since 1.60.0 can't install
   Chromium on the Ubuntu 26.04 `ubuntu-latest` runners
-- Bumped `reviewdog/action-actionlint` to v1.84.0
-
-### Security
-
-- The self-test fixture locks `zod@4.6.7`, clearing GHSA-mrhx-c7xc-m3w5
+- The self-test fixture runs against `tuffgal@0.3.2-alpha.1`, with its
+  baselines recaptured in CI
 
 ## [v1.7.0] - 2026-08-16
 
