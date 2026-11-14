@@ -1,12 +1,13 @@
 {
   "schemaVersion": 1,
   "captureSchema": 1,
-  "tuffgalVersion": "0.2.0-alpha.1",
-  "playwrightVersion": "1.60.0",
+  "tuffgalVersion": "0.3.2-alpha.1",
+  "playwrightVersion": "1.62.1",
   "browser": "chromium",
-  "browserVersion": "148.0.7778.96",
+  "browserVersion": "151.0.7922.34",
   "platform": "linux",
   "captureMode": "viewport",
+  "colorScheme": "light",
   "breakpoints": [
     {
       "name": "desktop",

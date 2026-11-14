@@ -8,6 +8,17 @@ this project uses [Pride Versioning](https://pridever.org) → `PROUD.DEFAULT.SH
 
 _Nothing just yet_
 
+## [v1.7.1] - 2026-11-14
+
+### Changed
+
+- Bumped `reviewdog/action-actionlint` to v1.84.0
+- The self-test fixture locks `zod@4.6.7`, clearing GHSA-mrhx-c7xc-m3w5
+- The self-test fixture pins Playwright 1.62.1, since 1.60.0 can't install
+  Chromium on the Ubuntu 26.04 `ubuntu-latest` runners
+- The self-test fixture runs against `tuffgal@0.3.2-alpha.1`, with its
+  baselines recaptured in CI
+
 ## [v1.7.0] - 2026-08-16
 
 ### Added
@@ -249,7 +260,8 @@ Outputs:
 Targets Node 22+
 Compatible with `tuffgal@^0.1.0-alpha.2`
 
-[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/nschneble/tuffgal-action/compare/v1.7.1...HEAD
+[v1.7.1]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.7.1
 [v1.7.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.7.0
 [v1.6.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.6.0
 [v1.5.0]: https://github.com/nschneble/tuffgal-action/releases/tag/v1.5.0
