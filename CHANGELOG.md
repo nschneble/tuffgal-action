@@ -18,6 +18,10 @@ _Nothing just yet_
   Chromium on the Ubuntu 26.04 `ubuntu-latest` runners
 - Bumped `reviewdog/action-actionlint` to v1.84.0
 
+### Security
+
+- The self-test fixture locks `zod@4.6.7`, clearing GHSA-mrhx-c7xc-m3w5
+
 ## [v1.7.0] - 2026-08-16
 
 ### Added
