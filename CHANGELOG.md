@@ -14,6 +14,8 @@ _Nothing just yet_
 
 - The self-test fixture runs against `tuffgal@0.3.2-alpha.1`, with its
   baselines recaptured in CI
+- The self-test fixture pins Playwright 1.62.1, since 1.60.0 can't install
+  Chromium on the Ubuntu 26.04 `ubuntu-latest` runners
 - Bumped `reviewdog/action-actionlint` to v1.84.0
 
 ## [v1.7.0] - 2026-08-16

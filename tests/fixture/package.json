@@ -8,6 +8,7 @@
     "serve": "node serve.mjs"
   },
   "devDependencies": {
+    "playwright": "1.62.1",
     "tuffgal": "0.3.2-alpha.1"
   },
   "engines": {
